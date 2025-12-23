@@ -1,7 +1,6 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { Prisma } from "@prisma/client";
 import { useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
@@ -14,31 +13,30 @@ import SectionBottomActions from "@calcom/features/settings/SectionBottomActions
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { md } from "@calcom/lib/markdownIt";
+import { markdownToSafeHTML } from "@calcom/lib/markdownToSafeHTML";
 import turndown from "@calcom/lib/turndownService";
-import { MembershipRole } from "@calcom/prisma/enums";
+import type { Prisma } from "@calcom/prisma/client";
 import { trpc } from "@calcom/trpc/react";
-import { Icon } from "@calcom/ui";
+import { Avatar } from "@calcom/ui/components/avatar";
+import { Button } from "@calcom/ui/components/button";
+import { LinkIconButton } from "@calcom/ui/components/button";
+import { Editor } from "@calcom/ui/components/editor";
+import { Form } from "@calcom/ui/components/form";
+import { Label } from "@calcom/ui/components/form";
+import { TextField } from "@calcom/ui/components/form";
+import { Icon } from "@calcom/ui/components/icon";
+import { BannerUploader, ImageUploader } from "@calcom/ui/components/image-uploader";
+// if I include this in the above barrel import, I get a runtime error that the component is not exported.
+import { OrgBanner } from "@calcom/ui/components/organization-banner";
 import {
-  Avatar,
-  BannerUploader,
-  Button,
-  Editor,
-  Form,
-  ImageUploader,
-  Label,
-  LinkIconButton,
-  Meta,
-  showToast,
-  SkeletonAvatar,
   SkeletonButton,
   SkeletonContainer,
   SkeletonText,
-  TextField,
-} from "@calcom/ui";
-// if I include this in the above barrel import, I get a runtime error that the component is not exported.
-import { OrgBanner } from "@calcom/ui";
+  SkeletonAvatar,
+} from "@calcom/ui/components/skeleton";
+import { showToast } from "@calcom/ui/components/toast";
+import { Tooltip } from "@calcom/ui/components/tooltip";
 
-import { getLayout } from "../../../../settings/layouts/SettingsLayout";
 import { useOrgBranding } from "../../../organizations/context/provider";
 
 const orgProfileFormSchema = z.object({
@@ -50,6 +48,7 @@ const orgProfileFormSchema = z.object({
 });
 
 type FormValues = {
+  id: number;
   name: string;
   logoUrl: string | null;
   banner: string | null;
@@ -58,11 +57,10 @@ type FormValues = {
   calVideoLogo: string | null;
 };
 
-const SkeletonLoader = ({ title, description }: { title: string; description: string }) => {
+const SkeletonLoader = () => {
   return (
     <SkeletonContainer>
-      <Meta title={title} description={description} borderInShellHeader={true} />
-      <div className="border-subtle space-y-6 rounded-b-xl border border-t-0 px-4 py-8">
+      <div className="border-subtle stack-y-6 rounded-b-xl border border-t-0 px-4 py-8">
         <div className="flex items-center">
           <SkeletonAvatar className="me-4 mt-0 h-16 w-16 px-4" />
           <SkeletonButton className="h-6 w-32 rounded-md p-5" />
@@ -77,7 +75,15 @@ const SkeletonLoader = ({ title, description }: { title: string; description: st
   );
 };
 
-const OrgProfileView = () => {
+const OrgProfileView = ({
+  permissions,
+}: {
+  permissions?: {
+    canRead: boolean;
+    canEdit: boolean;
+    canDelete: boolean;
+  };
+}) => {
   const { t } = useLocale();
   const router = useRouter();
 
@@ -103,12 +109,8 @@ const OrgProfileView = () => {
   );
 
   if (isPending || !orgBranding || !currentOrganisation) {
-    return <SkeletonLoader title={t("profile")} description={t("profile_org_description")} />;
+    return <SkeletonLoader />;
   }
-
-  const isOrgAdminOrOwner =
-    currentOrganisation.user.role === MembershipRole.OWNER ||
-    currentOrganisation.user.role === MembershipRole.ADMIN;
 
   const isBioEmpty =
     !currentOrganisation ||
@@ -116,6 +118,7 @@ const OrgProfileView = () => {
     !currentOrganisation.bio.replace("<p><br></p>", "").length;
 
   const defaultValues: FormValues = {
+    id: currentOrganisation?.id,
     name: currentOrganisation?.name || "",
     logoUrl: currentOrganisation?.logoUrl,
     banner: currentOrganisation?.bannerUrl || "",
@@ -129,16 +132,15 @@ const OrgProfileView = () => {
 
   return (
     <LicenseRequired>
-      <Meta title={t("profile")} description={t("profile_org_description")} borderInShellHeader={true} />
       <>
-        {isOrgAdminOrOwner ? (
+        {permissions?.canEdit ? (
           <>
             <OrgProfileForm defaultValues={defaultValues} />
             <OrgAppearanceViewWrapper />
           </>
         ) : (
           <div className="border-subtle flex rounded-b-md border border-t-0 px-4 py-8 sm:px-6">
-            <div className="flex-grow">
+            <div className="grow">
               <div>
                 <Label className="text-emphasis">{t("organization_name")}</Label>
                 <p className="text-default text-sm">{currentOrganisation?.name}</p>
@@ -147,8 +149,11 @@ const OrgProfileView = () => {
                 <>
                   <Label className="text-emphasis mt-5">{t("about")}</Label>
                   <div
-                    className="  text-subtle break-words text-sm [&_a]:text-blue-500 [&_a]:underline [&_a]:hover:text-blue-600"
-                    dangerouslySetInnerHTML={{ __html: md.render(currentOrganisation.bio || "") }}
+                    className="  text-subtle wrap-break-word text-sm [&_a]:text-blue-500 [&_a]:underline [&_a]:hover:text-blue-600"
+                    // eslint-disable-next-line react/no-danger
+                    dangerouslySetInnerHTML={{
+                      __html: markdownToSafeHTML(currentOrganisation.bio || ""),
+                    }}
                   />
                 </>
               )}
@@ -183,6 +188,11 @@ const OrgProfileForm = ({ defaultValues }: { defaultValues: FormValues }) => {
 
   const mutation = trpc.viewer.organizations.update.useMutation({
     onError: (err) => {
+      // Handle JSON parsing errors from body size limit exceeded
+      if (err.message.includes("Unexpected token") && err.message.includes("Body excee")) {
+        showToast(t("converted_image_size_limit_exceed"), "error");
+        return;
+      }
       showToast(err.message, "error");
     },
     onSuccess: async (res) => {
@@ -207,6 +217,14 @@ const OrgProfileForm = ({ defaultValues }: { defaultValues: FormValues }) => {
 
   const isDisabled = isSubmitting || !isDirty;
 
+  const handleCopy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      showToast(t("organization_id_copied"), "success");
+    } catch (error) {
+      showToast(t("error_copying_to_clipboard"), "error");
+    }
+  };
   return (
     <Form
       form={form}
@@ -371,6 +389,32 @@ const OrgProfileForm = ({ defaultValues }: { defaultValues: FormValues }) => {
             </div>
           )}
         />
+        <Controller
+          control={form.control}
+          name="id"
+          render={({ field: { value } }) => (
+            <div className="mt-8">
+              <TextField
+                name="id"
+                label={t("organization_id")}
+                value={value}
+                disabled={true}
+                addOnSuffix={
+                  <Tooltip content={t("copy_to_clipboard")}>
+                    <Button
+                      color="minimal"
+                      size="sm"
+                      type="button"
+                      aria-label="copy organization id"
+                      onClick={() => handleCopy(value.toString())}>
+                      <Icon name="copy" className="ml-1 h-4 w-4" />
+                    </Button>
+                  </Tooltip>
+                }
+              />
+            </div>
+          )}
+        />
         <div className="mt-8">
           <Label>{t("about")}</Label>
           <Editor
@@ -398,7 +442,5 @@ const OrgProfileForm = ({ defaultValues }: { defaultValues: FormValues }) => {
     </Form>
   );
 };
-
-OrgProfileView.getLayout = getLayout;
 
 export default OrgProfileView;

@@ -6,13 +6,14 @@ import {
   isPreviousDayInTimezone,
   isSupportedTimeZone,
   sortByTimezone,
-} from "@calcom/lib/date-fns";
+} from "@calcom/lib/dayjs";
 
-import { Icon } from "../..";
+import { Icon } from "../icon";
 
 type Attendee = {
   id: number;
   email: string;
+  phoneNumber?: string | null;
   name: string;
   timeZone: string;
   locale: string | null;
@@ -79,7 +80,7 @@ const MeetingTimeInTimezones = ({
               <span className="inline-flex align-baseline">
                 {time.startTime} - {time.endTime}
                 {(time.isNextDay || time.isPreviousDay) && (
-                  <span className="text-medium bg-muted text-emphasis ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px]">
+                  <span className="text-medium bg-cal-muted text-emphasis ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px]">
                     {time.isNextDay ? "+1" : "-1"}
                   </span>
                 )}
@@ -98,7 +99,7 @@ MeetingTimeInTimezones.displayName = "MeetingTimeInTimezones";
 
 // Prevents propagation so the click on eg booking overview won't
 // bubble to the row of the table, causing a navigation to the
-// detaill page.
+// detail page.
 const preventBubbling = (event: React.MouseEvent) => {
   event.stopPropagation();
   event.nativeEvent.preventDefault();

@@ -16,12 +16,12 @@ import { UsersModule } from "@/modules/users/users.module";
 import { INestApplication } from "@nestjs/common";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import { Test } from "@nestjs/testing";
-import { EventType, PlatformOAuthClient, Team, User } from "@prisma/client";
 import * as request from "supertest";
 import { EventTypesRepositoryFixture } from "test/fixtures/repository/event-types.repository.fixture";
 import { OAuthClientRepositoryFixture } from "test/fixtures/repository/oauth-client.repository.fixture";
 import { TeamRepositoryFixture } from "test/fixtures/repository/team.repository.fixture";
 import { UserRepositoryFixture } from "test/fixtures/repository/users.repository.fixture";
+import { randomString } from "test/utils/randomString";
 import { withApiAuth } from "test/utils/withApiAuth";
 
 import {
@@ -32,11 +32,12 @@ import {
 } from "@calcom/platform-constants";
 import {
   EventTypesByViewer,
-  EventTypesPublic,
   eventTypeBookingFields,
   eventTypeLocations,
-} from "@calcom/platform-libraries";
-import { ApiSuccessResponse } from "@calcom/platform-types";
+  EventTypesPublic,
+} from "@calcom/platform-libraries/event-types";
+import type { ApiSuccessResponse } from "@calcom/platform-types";
+import type { EventType, PlatformOAuthClient, Team, User } from "@calcom/prisma/client";
 
 describe("Event types Endpoints", () => {
   describe("Not authenticated", () => {
@@ -77,8 +78,8 @@ describe("Event types Endpoints", () => {
     let teamRepositoryFixture: TeamRepositoryFixture;
     let eventTypesRepositoryFixture: EventTypesRepositoryFixture;
 
-    const userEmail = "event-types-test-e2e@api.com";
-    const name = "bob-the-builder";
+    const userEmail = `event-types-2024-04-15-user-${randomString()}@api.com`;
+    const name = `event-types-2024-04-15-user-${randomString()}`;
     const username = name;
     let eventType: EventType;
     let user: User;
@@ -105,7 +106,9 @@ describe("Event types Endpoints", () => {
       teamRepositoryFixture = new TeamRepositoryFixture(moduleRef);
       eventTypesRepositoryFixture = new EventTypesRepositoryFixture(moduleRef);
 
-      organization = await teamRepositoryFixture.create({ name: "organization" });
+      organization = await teamRepositoryFixture.create({
+        name: `event-types-organization-${randomString()}`,
+      });
       oAuthClient = await createOAuthClient(organization.id);
       user = await userRepositoryFixture.create({
         email: userEmail,
@@ -139,7 +142,7 @@ describe("Event types Endpoints", () => {
     it("should create an event type", async () => {
       const body: CreateEventTypeInput_2024_04_15 = {
         title: "Test Event Type",
-        slug: "test-event-type",
+        slug: `event-types-event-type-${randomString()}`,
         description: "A description of the test event type.",
         length: 60,
         hidden: false,
@@ -287,7 +290,10 @@ describe("Event types Endpoints", () => {
           expect(responseBookingFields).toBeDefined();
           // note(Lauris): response bookingFields are already existing default bookingFields + the new one
           const responseBookingField = responseBookingFields.find((field) => field.name === bookingFieldName);
-          expect(responseBookingField).toEqual(bookingFields[0]);
+          const fields = responseBookingField;
+          // @ts-expect-error fields is possibly undefined
+          delete fields.labelAsSafeHtml;
+          expect(fields).toEqual(bookingFields[0]);
           eventType.bookingFields = responseBookingFields;
         });
     });

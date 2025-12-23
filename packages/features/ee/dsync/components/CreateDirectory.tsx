@@ -1,18 +1,13 @@
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 
+import { Dialog } from "@calcom/features/components/controlled-dialog";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  SelectField,
-  Form,
-  TextField,
-  DialogFooter,
-  showToast,
-} from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { DialogContent, DialogFooter } from "@calcom/ui/components/dialog";
+import { Form, TextField, SelectField } from "@calcom/ui/components/form";
+import { showToast } from "@calcom/ui/components/toast";
 
 import { directoryProviders } from "../lib/directoryProviders";
 
@@ -43,7 +38,7 @@ const CreateDirectory = ({ orgId }: { orgId: number | null }) => {
             {t("directory_sync_title")}
           </p>
         </div>
-        <div className="flex-shrink-0 pt-3 sm:ml-auto sm:pl-3 sm:pt-0">
+        <div className="shrink-0 pt-3 sm:ml-auto sm:pl-3 sm:pt-0">
           <Button color="primary" onClick={() => setOpenModal(true)}>
             {t("configure")}
           </Button>
@@ -66,7 +61,7 @@ const CreateDirectory = ({ orgId }: { orgId: number | null }) => {
               </h2>
               <p className="mt-1 text-sm text-gray-500">{t("directory_sync_configure_description")}</p>
             </div>
-            <fieldset className="space-y-6 py-2">
+            <fieldset className="stack-y-6 py-2">
               <Controller
                 control={form.control}
                 name="name"

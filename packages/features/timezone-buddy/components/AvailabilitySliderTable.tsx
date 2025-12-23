@@ -1,19 +1,30 @@
+"use client";
+
 import { keepPreviousData } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
+import { getCoreRowModel, getFilteredRowModel, useReactTable } from "@tanstack/react-table";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import dayjs from "@calcom/dayjs";
+import { DataTableProvider } from "@calcom/features/data-table/DataTableProvider";
+import { DataTable, DataTableToolbar } from "@calcom/features/data-table/components";
+import { useDataTable } from "@calcom/features/data-table/hooks";
+import type { DateRange } from "@calcom/features/schedules/lib/date-ranges";
 import { APP_NAME, WEBAPP_URL } from "@calcom/lib/constants";
-import type { DateRange } from "@calcom/lib/date-ranges";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { CURRENT_TIMEZONE } from "@calcom/lib/timezoneConstants";
 import type { MembershipRole } from "@calcom/prisma/enums";
-import { trpc } from "@calcom/trpc";
+import { trpc } from "@calcom/trpc/react";
 import type { UserProfile } from "@calcom/types/UserProfile";
-import { Button, ButtonGroup, DataTable, UserAvatar } from "@calcom/ui";
+import { UserAvatar } from "@calcom/ui/components/avatar";
+import { Button } from "@calcom/ui/components/button";
+import { ButtonGroup } from "@calcom/ui/components/buttonGroup";
 
 import { UpgradeTip } from "../../tips/UpgradeTip";
 import { createTimezoneBuddyStore, TBContext } from "../store";
 import { AvailabilityEditSheet } from "./AvailabilityEditSheet";
+import { CellHighlightContainer } from "./CellHighlightContainer";
 import { TimeDial } from "./TimeDial";
 
 export interface SliderUser {
@@ -37,11 +48,11 @@ function UpgradeTeamTip() {
     <UpgradeTip
       plan="team"
       title={t("calcom_is_better_with_team", { appName: APP_NAME }) as string}
-      description="add_your_team_members"
+      description={t("add_your_team_members")}
       background="/tips/teams"
       features={[]}
       buttons={
-        <div className="space-y-2 rtl:space-x-reverse sm:space-x-2">
+        <div className="stack-y-2 rtl:space-x-reverse sm:space-x-2">
           <ButtonGroup>
             <Button color="primary" href={`${WEBAPP_URL}/settings/teams/new`}>
               {t("create_team")}
@@ -57,18 +68,30 @@ function UpgradeTeamTip() {
   );
 }
 
-export function AvailabilitySliderTable(props: { userTimeFormat: number | null }) {
+export function AvailabilitySliderTable(props: { isOrg: boolean }) {
+  const pathname = usePathname();
+  if (!pathname) return null;
+  return (
+    <DataTableProvider tableIdentifier={pathname}>
+      <AvailabilitySliderTableContent {...props} />
+    </DataTableProvider>
+  );
+}
+
+function AvailabilitySliderTableContent(props: { isOrg: boolean }) {
   const tableContainerRef = useRef<HTMLDivElement>(null);
   const [browsingDate, setBrowsingDate] = useState(dayjs());
   const [editSheetOpen, setEditSheetOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<SliderUser | null>(null);
+  const { searchTerm } = useDataTable();
 
   const { data, isPending, fetchNextPage, isFetching } = trpc.viewer.availability.listTeam.useInfiniteQuery(
     {
       limit: 10,
-      loggedInUsersTz: dayjs.tz.guess() || "Europe/London",
+      loggedInUsersTz: CURRENT_TIMEZONE,
       startDate: browsingDate.startOf("day").toISOString(),
       endDate: browsingDate.endOf("day").toISOString(),
+      searchString: searchTerm,
     },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
@@ -80,12 +103,15 @@ export function AvailabilitySliderTable(props: { userTimeFormat: number | null }
     const cols: ColumnDef<SliderUser>[] = [
       {
         id: "member",
-        accessorFn: (data) => data.email,
+        accessorFn: (data) => data.username,
+        enableHiding: false,
+        enableSorting: false,
         header: "Member",
+        size: 200,
         cell: ({ row }) => {
           const { username, email, timeZone, name, avatarUrl, profile } = row.original;
           return (
-            <div className="max-w-64 flex flex-shrink-0 items-center gap-2 overflow-hidden">
+            <div className="max-w-64 flex shrink-0 items-center gap-2 overflow-hidden">
               <UserAvatar
                 size="sm"
                 user={{
@@ -104,11 +130,17 @@ export function AvailabilitySliderTable(props: { userTimeFormat: number | null }
             </div>
           );
         },
+        filterFn: (row, id, value) => {
+          return row.original.username?.toLowerCase().includes(value.toLowerCase()) || false;
+        },
       },
       {
         id: "timezone",
         accessorFn: (data) => data.timeZone,
         header: "Timezone",
+        enableHiding: false,
+        enableSorting: false,
+        size: 160,
         cell: ({ row }) => {
           const { timeZone } = row.original;
           const timeRaw = dayjs().tz(timeZone);
@@ -130,6 +162,11 @@ export function AvailabilitySliderTable(props: { userTimeFormat: number | null }
       },
       {
         id: "slider",
+        meta: {
+          autoWidth: true,
+        },
+        enableHiding: false,
+        enableSorting: false,
         header: () => {
           return (
             <div className="flex items-center space-x-2">
@@ -164,7 +201,7 @@ export function AvailabilitySliderTable(props: { userTimeFormat: number | null }
 
   //we must flatten the array of arrays from the useInfiniteQuery hook
   const flatData = useMemo(() => data?.pages?.flatMap((page) => page.rows) ?? [], [data]) as SliderUser[];
-  const totalDBRowCount = data?.pages?.[0]?.meta?.totalRowCount ?? 0;
+  const totalRowCount = data?.pages?.[0]?.meta?.totalRowCount ?? 0;
   const totalFetched = flatData.length;
 
   //called on scroll and possibly on mount to fetch more data as the user scrolls and reaches bottom of table
@@ -173,20 +210,27 @@ export function AvailabilitySliderTable(props: { userTimeFormat: number | null }
       if (containerRefElement) {
         const { scrollHeight, scrollTop, clientHeight } = containerRefElement;
         //once the user has scrolled within 300px of the bottom of the table, fetch more data if there is any
-        if (scrollHeight - scrollTop - clientHeight < 300 && !isFetching && totalFetched < totalDBRowCount) {
+        if (scrollHeight - scrollTop - clientHeight < 300 && !isFetching && totalFetched < totalRowCount) {
           fetchNextPage();
         }
       }
     },
-    [fetchNextPage, isFetching, totalFetched, totalDBRowCount]
+    [fetchNextPage, isFetching, totalFetched, totalRowCount]
   );
 
   useEffect(() => {
     fetchMoreOnBottomReached(tableContainerRef.current);
   }, [fetchMoreOnBottomReached]);
 
+  const table = useReactTable({
+    data: flatData,
+    columns: memorisedColumns,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+  });
+
   // This means they are not apart of any teams so we show the upgrade tip
-  if (!flatData.length) return <UpgradeTeamTip />;
+  if (!flatData.length && !data?.pages?.[0]?.meta?.isApartOfAnyTeam) return <UpgradeTeamTip />;
 
   return (
     <TBContext.Provider
@@ -194,22 +238,23 @@ export function AvailabilitySliderTable(props: { userTimeFormat: number | null }
         browsingDate: browsingDate.toDate(),
       })}>
       <>
-        <div className="relative -mx-2 w-[calc(100%+16px)] overflow-x-scroll px-2 lg:-mx-6 lg:w-[calc(100%+48px)] lg:px-6">
+        <CellHighlightContainer>
           <DataTable
-            variant="compact"
-            searchKey="member"
+            table={table}
             tableContainerRef={tableContainerRef}
-            columns={memorisedColumns}
             onRowMouseclick={(row) => {
-              setEditSheetOpen(true);
-              setSelectedUser(row.original);
+              if (props.isOrg) {
+                setEditSheetOpen(true);
+                setSelectedUser(row.original);
+              }
             }}
-            data={flatData}
             isPending={isPending}
-            // tableOverlay={<HoverOverview />}
-            onScroll={(e) => fetchMoreOnBottomReached(e.target as HTMLDivElement)}
-          />
-        </div>
+            onScroll={(e) => fetchMoreOnBottomReached(e.target as HTMLDivElement)}>
+            <DataTableToolbar.Root>
+              <DataTableToolbar.SearchBar />
+            </DataTableToolbar.Root>
+          </DataTable>
+        </CellHighlightContainer>
         {selectedUser && editSheetOpen ? (
           <AvailabilityEditSheet
             open={editSheetOpen}

@@ -27,15 +27,13 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { Icon } from "../../..";
 import { Button } from "../../button";
-import { Dropdown, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../form/dropdown";
-import type { TextEditorProps } from "../Editor";
+import { Dropdown, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../dropdown";
+import { Icon } from "../../icon";
+import type { TextEditorProps } from "../types";
 import { AddVariablesDropdown } from "./AddVariablesDropdown";
 
 const LowPriority = 1;
-
-const supportedBlockTypes = new Set(["paragraph", "h1", "h2", "ul", "ol"]);
 
 interface BlockType {
   [key: string]: string;
@@ -56,8 +54,31 @@ function positionEditorElement(editor: HTMLInputElement, rect: DOMRect | null) {
     editor.style.left = "-1000px";
   } else {
     editor.style.opacity = "1";
-    editor.style.top = `${rect.top + rect.height + window.pageYOffset + 10}px`;
-    editor.style.left = `${rect.left + window.pageXOffset - editor.offsetWidth / 2 + rect.width / 2}px`;
+
+    let top = rect.top + rect.height + window.pageYOffset + 10;
+    let left = rect.left + window.pageXOffset - editor.offsetWidth / 2 + rect.width / 2;
+
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const editorWidth = editor.offsetWidth || 300;
+    const editorHeight = editor.offsetHeight || 100;
+
+    if (left < 10) {
+      left = 10;
+    } else if (left + editorWidth > viewportWidth - 10) {
+      left = viewportWidth - editorWidth - 10;
+    }
+
+    if (top + editorHeight > window.pageYOffset + viewportHeight - 10) {
+      top = rect.top + window.pageYOffset - editorHeight - 10;
+
+      if (top < window.pageYOffset + 10) {
+        top = window.pageYOffset + 10;
+      }
+    }
+
+    editor.style.top = `${top}px`;
+    editor.style.left = `${left}px`;
   }
 }
 
@@ -360,13 +381,16 @@ export default function ToolbarPlugin(props: TextEditorProps) {
         }
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.updateTemplate]);
 
   useEffect(() => {
     if (props.setFirstRender) {
       props.setFirstRender(false);
       editor.update(() => {
+        const currentContent = $getRoot().getTextContent().trim();
+        if (currentContent) {
+          return;
+        }
         const parser = new DOMParser();
         const dom = parser.parseFromString(props.getText(), "text/html");
 
@@ -375,7 +399,7 @@ export default function ToolbarPlugin(props: TextEditorProps) {
         $getRoot().select();
         try {
           $insertNodes(nodes);
-        } catch (e: unknown) {
+        } catch {
           // resolves: "topLevelElement is root node at RangeSelection.insertNodes"
           // @see https://stackoverflow.com/questions/73094258/setting-editor-from-html
           const paragraphNode = $createParagraphNode();
@@ -397,7 +421,6 @@ export default function ToolbarPlugin(props: TextEditorProps) {
         });
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -426,11 +449,11 @@ export default function ToolbarPlugin(props: TextEditorProps) {
     }
   }, [editor, isLink]);
 
-  if (!props.editable) return <></>;
+  if (!props.editable) return null;
   return (
-    <div className="toolbar flex" ref={toolbarRef}>
+    <div className="toolbar flex gap-1" ref={toolbarRef}>
       <>
-        {!props.excludedToolbarItems?.includes("blockType") && supportedBlockTypes.has(blockType) && (
+        {!props.excludedToolbarItems?.includes("blockType") && (
           <>
             <Dropdown>
               <DropdownMenuTrigger className="text-subtle">
@@ -442,16 +465,18 @@ export default function ToolbarPlugin(props: TextEditorProps) {
                   <Icon name="chevron-down" className="text-default ml-2 h-4 w-4" />
                 </>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
+              <DropdownMenuContent align="start" className="flex flex-col gap-1">
                 {Object.keys(blockTypeToBlockName).map((key) => {
                   return (
-                    <DropdownMenuItem key={key} className="outline-none hover:ring-0 focus:ring-0">
+                    <DropdownMenuItem
+                      key={key}
+                      className="outline-none hover:ring-0 focus:ring-0 rounded-md">
                       <Button
                         color="minimal"
                         type="button"
                         onClick={() => format(key)}
                         className={classNames(
-                          "w-full rounded-none focus:ring-0",
+                          "w-full rounded-md focus:ring-0",
                           blockType === key ? "bg-subtle w-full" : ""
                         )}>
                         <>
@@ -467,9 +492,10 @@ export default function ToolbarPlugin(props: TextEditorProps) {
           </>
         )}
 
-        <>
+        <div className="flex gap-1">
           {!props.excludedToolbarItems?.includes("bold") && (
             <Button
+              aria-label="Bold"
               color="minimal"
               variant="icon"
               type="button"
@@ -482,6 +508,7 @@ export default function ToolbarPlugin(props: TextEditorProps) {
           )}
           {!props.excludedToolbarItems?.includes("italic") && (
             <Button
+              aria-label="Italic"
               color="minimal"
               variant="icon"
               type="button"
@@ -495,6 +522,7 @@ export default function ToolbarPlugin(props: TextEditorProps) {
           {!props.excludedToolbarItems?.includes("link") && (
             <>
               <Button
+                aria-label="Link"
                 color="minimal"
                 variant="icon"
                 type="button"
@@ -505,13 +533,14 @@ export default function ToolbarPlugin(props: TextEditorProps) {
               {isLink && createPortal(<FloatingLinkEditor editor={editor} />, document.body)}{" "}
             </>
           )}
-        </>
+        </div>
         {props.variables && (
-          <div className="ml-auto">
+          <div className={`${props.addVariableButtonTop ? "-mt-10" : ""} ml-auto`}>
             <AddVariablesDropdown
               addVariable={addVariable}
               isTextEditor={true}
               variables={props.variables || []}
+              addVariableButtonTop={props.addVariableButtonTop}
             />
           </div>
         )}

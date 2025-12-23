@@ -3,20 +3,23 @@ import { useEffect, useState } from "react";
 import type { OptionProps, SingleValueProps } from "react-select";
 import { components } from "react-select";
 
+import type { SelectClassNames } from "@calcom/features/eventtypes/lib/types";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import type { DestinationCalendar } from "@calcom/prisma/client";
-import { trpc } from "@calcom/trpc/react";
-import { Badge, Icon, Select } from "@calcom/ui";
+import type { RouterOutputs } from "@calcom/trpc/react";
+import { Badge } from "@calcom/ui/components/badge";
+import { Select } from "@calcom/ui/components/form";
+import { Icon } from "@calcom/ui/components/icon";
 
 interface Props {
   onChange: (value: { externalId: string; integration: string }) => void;
   isPending?: boolean;
   hidePlaceholder?: boolean;
-  /** The external Id of the connected calendar */
-  destinationCalendar?: DestinationCalendar | null;
+  /** The external Id of the connected calendar */ // destinationCalendar?: DestinationCalendar | null;
   value: string | undefined;
   maxWidth?: number;
   hideAdvancedText?: boolean;
+  calendarsQueryData?: RouterOutputs["viewer"]["calendars"]["connectedCalendars"];
+  customClassNames?: SelectClassNames;
 }
 
 interface Option {
@@ -53,9 +56,13 @@ const DestinationCalendarSelector = ({
   hidePlaceholder,
   hideAdvancedText,
   maxWidth,
+  calendarsQueryData,
+  customClassNames,
 }: Props): JSX.Element | null => {
   const { t } = useLocale();
-  const query = trpc.viewer.connectedCalendars.useQuery();
+  const connectedCalendarsList = calendarsQueryData?.connectedCalendars;
+  const destinationCalendar = calendarsQueryData?.destinationCalendar;
+
   const [selectedOption, setSelectedOption] = useState<{
     value: string;
     label: string;
@@ -80,31 +87,31 @@ const DestinationCalendarSelector = ({
   };
 
   useEffect(() => {
-    const selected = query.data?.connectedCalendars
-      .map((connected) => connected.calendars ?? [])
+    const selected = connectedCalendarsList
+      ?.map((connected) => connected.calendars ?? [])
       .flat()
       .find((cal) => cal.externalId === value);
 
     if (selected) {
-      const selectedIntegration = query.data?.connectedCalendars.find((integration) =>
+      const selectedIntegration = connectedCalendarsList?.find((integration) =>
         integration.calendars?.some((calendar) => calendar.externalId === selected.externalId)
       );
 
       setSelectedOption({
         value: `${selected.integration}:${selected.externalId}`,
-        label: `${selected.name} ` || "",
+        label: selected.name ? `${selected.name} ` : "",
         subtitle: `(${selectedIntegration?.integration.title?.replace(/calendar/i, "")} - ${
           selectedIntegration?.primary?.name
         })`,
       });
     }
-  }, [query.data?.connectedCalendars]);
+  }, [connectedCalendarsList]);
 
-  if (!query.data?.connectedCalendars.length) {
+  if (!connectedCalendarsList?.length) {
     return null;
   }
   const options =
-    query.data.connectedCalendars.map((selectedCalendar) => ({
+    connectedCalendarsList?.map((selectedCalendar) => ({
       key: selectedCalendar.credentialId,
       label: `${selectedCalendar.integration.title?.replace(/calendar/i, "")} (${
         selectedCalendar.primary?.integration === "office365_calendar"
@@ -122,8 +129,6 @@ const DestinationCalendarSelector = ({
         })),
     })) ?? [];
 
-  const queryDestinationCalendar = query.data.destinationCalendar;
-
   return (
     <div
       className="relative table w-full table-fixed"
@@ -136,29 +141,30 @@ const DestinationCalendarSelector = ({
           ) : (
             <span className="text-default min-w-0 overflow-hidden truncate whitespace-nowrap">
               <Badge variant="blue">Default</Badge>{" "}
-              {queryDestinationCalendar.name &&
-                `${queryDestinationCalendar.name} (${queryDestinationCalendar?.integrationTitle} - ${queryDestinationCalendar.primaryEmail})`}
+              {destinationCalendar?.name &&
+                `${destinationCalendar.name} (${destinationCalendar?.integrationTitle} - ${destinationCalendar.primaryEmail})`}
             </span>
           )
         }
         options={options}
         styles={{
-          placeholder: (styles) => ({ ...styles, ...content(hidePlaceholder) }),
-          singleValue: (styles) => ({ ...styles, ...content(hidePlaceholder) }),
-          control: (defaultStyles) => {
-            return {
-              ...defaultStyles,
-              "@media only screen and (min-width: 640px)": {
-                ...(defaultStyles["@media only screen and (min-width: 640px)"] as object),
-                maxWidth,
-              },
-            };
-          },
+          placeholder: (styles) => Object.assign({}, styles, content(hidePlaceholder)),
+          singleValue: (styles) => Object.assign({}, styles, content(hidePlaceholder)),
+          control: (defaultStyles) =>
+            Object.assign({}, defaultStyles, {
+              "@media only screen and (min-width: 640px)": Object.assign(
+                {},
+                defaultStyles["@media only screen and (min-width: 640px)"] as object,
+                { maxWidth }
+              ),
+            }),
         }}
         isSearchable={false}
         className={classNames(
-          "border-default my-2 block w-full min-w-0 flex-1 rounded-none rounded-r-sm text-sm"
+          "border-default my-2 block w-full min-w-0 flex-1 rounded-none rounded-r-sm text-sm",
+          customClassNames?.select
         )}
+        innerClassNames={customClassNames?.innerClassNames}
         onChange={(newValue) => {
           setSelectedOption(newValue);
           if (!newValue) {

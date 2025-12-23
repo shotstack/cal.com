@@ -1,17 +1,14 @@
 import type { SSOConnection } from "@calcom/ee/sso/lib/saml";
+import { Dialog } from "@calcom/features/components/controlled-dialog";
 import { APP_NAME } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import {
-  Button,
-  ConfirmationDialogContent,
-  Dialog,
-  DialogTrigger,
-  Icon,
-  Label,
-  showToast,
-  Tooltip,
-} from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { DialogTrigger, ConfirmationDialogContent } from "@calcom/ui/components/dialog";
+import { Label } from "@calcom/ui/components/form";
+import { Icon } from "@calcom/ui/components/icon";
+import { showToast } from "@calcom/ui/components/toast";
+import { Tooltip } from "@calcom/ui/components/tooltip";
 
 export default function ConnectionInfo({
   teamId,
@@ -52,7 +49,7 @@ export default function ConnectionInfo({
         <OIDCInfo callbackUrl={connection.callbackUrl} />
       )}
       <hr className="border-subtle my-6" />
-      <div className="flex flex-col space-y-3">
+      <div className="flex flex-col stack-y-3">
         <Label>{t("danger_zone")}</Label>
         <Dialog>
           <div>
@@ -86,7 +83,7 @@ const SAMLInfo = ({ acsUrl, entityId }: { acsUrl: string | null; entityId: strin
   }
 
   return (
-    <div className="space-y-6">
+    <div className="stack-y-6">
       <div className="flex flex-col">
         <div className="flex">
           <Label>ACS URL</Label>

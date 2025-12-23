@@ -1,19 +1,26 @@
-import type { Prisma } from "@prisma/client";
 import z from "zod";
 
 import { getCalendar } from "@calcom/app-store/_utils/getCalendar";
 import { appStoreMetadata } from "@calcom/app-store/appStoreMetaData";
-import { DailyLocationType } from "@calcom/core/location";
-import { sendCancelledEmails } from "@calcom/emails";
+import { DailyLocationType } from "@calcom/app-store/locations";
+import {
+  type EventTypeAppMetadataSchema,
+  eventTypeAppMetadataOptionalSchema,
+} from "@calcom/app-store/zod-utils";
+import { eventTypeMetaDataSchemaWithTypedApps } from "@calcom/app-store/zod-utils";
+import { sendCancelledEmailsAndSMS } from "@calcom/emails/email-manager";
 import { getCalEventResponses } from "@calcom/features/bookings/lib/getCalEventResponses";
+import { deletePayment } from "@calcom/features/bookings/lib/payment/deletePayment";
 import { deleteWebhookScheduledTriggers } from "@calcom/features/webhooks/lib/scheduleTrigger";
-import { isPrismaObjOrUndefined, parseRecurringEvent } from "@calcom/lib";
-import { deletePayment } from "@calcom/lib/payment/deletePayment";
+import { buildNonDelegationCredential } from "@calcom/lib/delegationCredential";
+import { isPrismaObjOrUndefined } from "@calcom/lib/isPrismaObj";
+import { parseRecurringEvent } from "@calcom/lib/isRecurringEvent";
 import { getTranslation } from "@calcom/lib/server/i18n";
 import { bookingMinimalSelect, prisma } from "@calcom/prisma";
+import type { Prisma } from "@calcom/prisma/client";
 import { AppCategories, BookingStatus } from "@calcom/prisma/enums";
 import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
-import type { EventTypeAppMetadataSchema, EventTypeMetadata } from "@calcom/prisma/zod-utils";
+import type { EventTypeMetadata } from "@calcom/prisma/zod-utils";
 import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import { userMetadata as userMetadataSchema } from "@calcom/prisma/zod-utils";
 
@@ -39,7 +46,7 @@ const handleDeleteCredential = async ({
   teamId,
 }: {
   userId: number;
-  userMetadata: Prisma.JsonValue;
+  userMetadata?: Prisma.JsonValue;
   credentialId: number;
   teamId?: number;
 }) => {
@@ -133,7 +140,7 @@ const handleDeleteCredential = async ({
       credential.app?.categories.includes(AppCategories.calendar) &&
       eventType.destinationCalendar?.credential?.appId === credential.appId
     ) {
-      const destinationCalendar = await prisma.destinationCalendar.findFirst({
+      const destinationCalendar = await prisma.destinationCalendar.findUnique({
         where: {
           id: eventType.destinationCalendar?.id,
         },
@@ -151,9 +158,11 @@ const handleDeleteCredential = async ({
     if (credential.app?.categories.includes(AppCategories.crm)) {
       const metadata = EventTypeMetaDataSchema.parse(eventType.metadata);
       const appSlugToDelete = credential.app?.slug;
-
+      const apps = eventTypeAppMetadataOptionalSchema.parse(metadata?.apps);
       if (appSlugToDelete) {
-        const appMetadata = removeAppFromEventTypeMetadata(appSlugToDelete, metadata);
+        const appMetadata = removeAppFromEventTypeMetadata(appSlugToDelete, {
+          apps,
+        });
 
         await prisma.$transaction(async () => {
           await prisma.eventType.update({
@@ -179,7 +188,10 @@ const handleDeleteCredential = async ({
       const metadata = EventTypeMetaDataSchema.parse(eventType.metadata);
       const appSlug = credential.app?.slug;
       if (appSlug) {
-        const appMetadata = removeAppFromEventTypeMetadata(appSlug, metadata);
+        const apps = eventTypeAppMetadataOptionalSchema.parse(metadata?.apps);
+        const appMetadata = removeAppFromEventTypeMetadata(appSlug, {
+          apps,
+        });
 
         await prisma.$transaction(async () => {
           await prisma.eventType.update({
@@ -197,15 +209,21 @@ const handleDeleteCredential = async ({
             },
           });
 
-          // Assuming that all bookings under this eventType need to be paid
+          // Only cancel unpaid pending bookings that:
+          // 1. Are in the future (startTime > now) - don't cancel old bookings
+          // 2. Have failed payments associated with the payment app being deleted
           const unpaidBookings = await prisma.booking.findMany({
             where: {
               userId: userId,
               eventTypeId: eventType.id,
               status: "PENDING",
               paid: false,
+              startTime: {
+                gt: new Date(),
+              },
               payment: {
-                every: {
+                some: {
+                  appId: credential.appId,
                   success: false,
                 },
               },
@@ -224,6 +242,11 @@ const handleDeleteCredential = async ({
                   name: true,
                   destinationCalendar: true,
                   locale: true,
+                  profiles: {
+                    select: {
+                      organizationId: true,
+                    },
+                  },
                 },
               },
               location: true,
@@ -244,6 +267,13 @@ const handleDeleteCredential = async ({
                   seatsPerTimeSlot: true,
                   seatsShowAttendees: true,
                   eventName: true,
+                  hideOrganizerEmail: true,
+                  team: {
+                    select: {
+                      id: true,
+                      name: true,
+                    },
+                  },
                   metadata: true,
                 },
               },
@@ -253,42 +283,47 @@ const handleDeleteCredential = async ({
             },
           });
 
+          const unpaidBookingsIds = unpaidBookings.map((booking) => booking.id);
+          const unpaidBookingsPaymentIds = unpaidBookings.flatMap((booking) =>
+            booking.payment.map((payment) => payment.id)
+          );
+          await prisma.booking.updateMany({
+            where: {
+              id: {
+                in: unpaidBookingsIds,
+              },
+            },
+            data: {
+              status: BookingStatus.CANCELLED,
+              cancellationReason: "Payment method removed",
+            },
+          });
+          for (const paymentId of unpaidBookingsPaymentIds) {
+            await deletePayment(paymentId, credential);
+          }
+          await prisma.payment.deleteMany({
+            where: {
+              id: {
+                in: unpaidBookingsPaymentIds,
+              },
+            },
+          });
+          await prisma.attendee.deleteMany({
+            where: {
+              bookingId: {
+                in: unpaidBookingsIds,
+              },
+            },
+          });
+          await prisma.bookingReference.updateMany({
+            where: {
+              bookingId: {
+                in: unpaidBookingsIds,
+              },
+            },
+            data: { deleted: true },
+          });
           for (const booking of unpaidBookings) {
-            await prisma.booking.update({
-              where: {
-                id: booking.id,
-              },
-              data: {
-                status: BookingStatus.CANCELLED,
-                cancellationReason: "Payment method removed",
-              },
-            });
-
-            for (const payment of booking.payment) {
-              try {
-                await deletePayment(payment.id, credential);
-              } catch (e) {
-                console.error(e);
-              }
-              await prisma.payment.delete({
-                where: {
-                  id: payment.id,
-                },
-              });
-            }
-
-            await prisma.attendee.deleteMany({
-              where: {
-                bookingId: booking.id,
-              },
-            });
-
-            await prisma.bookingReference.deleteMany({
-              where: {
-                bookingId: booking.id,
-              },
-            });
-
             const attendeesListPromises = booking.attendees.map(async (attendee) => {
               return {
                 name: attendee.name,
@@ -303,7 +338,7 @@ const handleDeleteCredential = async ({
 
             const attendeesList = await Promise.all(attendeesListPromises);
             const tOrganizer = await getTranslation(booking?.user?.locale ?? "en", "common");
-            await sendCancelledEmails(
+            await sendCancelledEmailsAndSMS(
               {
                 type: booking?.eventType?.title as string,
                 title: booking.title,
@@ -333,6 +368,15 @@ const handleDeleteCredential = async ({
                 cancellationReason: "Payment method removed by organizer",
                 seatsPerTimeSlot: booking.eventType?.seatsPerTimeSlot,
                 seatsShowAttendees: booking.eventType?.seatsShowAttendees,
+                hideOrganizerEmail: booking.eventType?.hideOrganizerEmail,
+                team: booking.eventType?.team
+                  ? {
+                      name: booking.eventType.team.name,
+                      id: booking.eventType.team.id,
+                      members: [],
+                    }
+                  : undefined,
+                organizationId: booking.user?.profiles?.[0]?.organizationId ?? null,
               },
               {
                 eventName: booking?.eventType?.eventName,
@@ -345,7 +389,7 @@ const handleDeleteCredential = async ({
     } else if (
       appStoreMetadata[credential.app?.slug as keyof typeof appStoreMetadata]?.extendsFeature === "EventType"
     ) {
-      const metadata = EventTypeMetaDataSchema.parse(eventType.metadata);
+      const metadata = eventTypeMetaDataSchemaWithTypedApps.parse(eventType.metadata);
       const appSlug = credential.app?.slug;
       if (appSlug) {
         await prisma.eventType.update({
@@ -367,18 +411,19 @@ const handleDeleteCredential = async ({
     }
   }
 
-  // if zapier get disconnected, delete zapier apiKey, delete zapier webhooks and cancel all scheduled jobs from zapier
-  if (credential.app?.slug === "zapier") {
+  // if zapier or make get disconnected, delete its apiKey, delete its webhooks and cancel all scheduled jobs
+  if (credential.app?.slug === "zapier" || credential.app?.slug === "make") {
+    const ownerFilter = teamId ? { teamId } : { userId };
     await prisma.apiKey.deleteMany({
       where: {
-        userId: userId,
-        appId: "zapier",
+        ...ownerFilter,
+        appId: credential.app.slug,
       },
     });
     await prisma.webhook.deleteMany({
       where: {
-        userId: userId,
-        appId: "zapier",
+        ...ownerFilter,
+        appId: credential.app.slug,
       },
     });
 
@@ -410,7 +455,7 @@ const handleDeleteCredential = async ({
   // If it's a calendar remove it from the SelectedCalendars
   if (credential.app?.categories.includes(AppCategories.calendar)) {
     try {
-      const calendar = await getCalendar(credential);
+      const calendar = await getCalendar(buildNonDelegationCredential(credential));
 
       const calendars = await calendar?.listCalendars();
 
@@ -443,7 +488,9 @@ const handleDeleteCredential = async ({
 
 const removeAppFromEventTypeMetadata = (
   appSlugToDelete: string,
-  eventTypeMetadata: z.infer<typeof EventTypeMetaDataSchema>
+  eventTypeMetadata: {
+    apps: z.infer<typeof eventTypeAppMetadataOptionalSchema>;
+  }
 ) => {
   const appMetadata = eventTypeMetadata?.apps
     ? Object.entries(eventTypeMetadata.apps).reduce((filteredApps, [appName, appData]) => {

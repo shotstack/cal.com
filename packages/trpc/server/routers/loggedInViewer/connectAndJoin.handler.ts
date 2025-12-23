@@ -1,12 +1,13 @@
-import { sendScheduledEmails } from "@calcom/emails";
+import { sendScheduledEmailsAndSMS } from "@calcom/emails/email-manager";
 import { getCalEventResponses } from "@calcom/features/bookings/lib/getCalEventResponses";
-import { isPrismaObjOrUndefined } from "@calcom/lib";
+import { scheduleNoShowTriggers } from "@calcom/features/bookings/lib/handleNewBooking/scheduleNoShowTriggers";
+import { isPrismaObjOrUndefined } from "@calcom/lib/isPrismaObj";
 import { getTranslation } from "@calcom/lib/server/i18n";
 import { getTimeFormatStringFromUserTimeFormat } from "@calcom/lib/timeFormat";
 import { prisma } from "@calcom/prisma";
 import { BookingStatus } from "@calcom/prisma/enums";
 import { bookingMetadataSchema, EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
-import type { TrpcSessionUser } from "@calcom/trpc/server/trpc";
+import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 import type { CalendarEvent } from "@calcom/types/Calendar";
 
 import { TRPCError } from "@trpc/server";
@@ -126,8 +127,16 @@ export const Handler = async ({ ctx, input }: Options) => {
           bookingFields: true,
           disableGuests: true,
           metadata: true,
+          hideOrganizerEmail: true,
           customInputs: true,
           parentId: true,
+          customReplyToEmail: true,
+          team: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
         },
       },
       location: true,
@@ -196,17 +205,27 @@ export const Handler = async ({ ctx, input }: Options) => {
       timeFormat: getTimeFormatStringFromUserTimeFormat(user.timeFormat),
       language: { translate: tOrganizer, locale: user.locale ?? "en" },
     },
+    hideOrganizerEmail: updatedBooking.eventType?.hideOrganizerEmail,
     attendees: attendeesList,
     location: updatedBooking.location ?? "",
     uid: updatedBooking.uid,
     requiresConfirmation: false,
     eventTypeId: eventType?.id,
     videoCallData,
+    customReplyToEmail: eventType?.customReplyToEmail,
+    organizationId: user?.organizationId ?? null,
+    team: updatedBooking.eventType?.team
+      ? {
+          name: updatedBooking.eventType.team.name,
+          id: updatedBooking.eventType.team.id,
+          members: [],
+        }
+      : undefined,
   };
 
   const eventTypeMetadata = EventTypeMetaDataSchema.parse(updatedBooking?.eventType?.metadata);
 
-  await sendScheduledEmails(
+  await sendScheduledEmailsAndSMS(
     {
       ...evt,
     },
@@ -215,6 +234,20 @@ export const Handler = async ({ ctx, input }: Options) => {
     false,
     eventTypeMetadata
   );
+
+  await scheduleNoShowTriggers({
+    booking: {
+      startTime: updatedBooking.startTime,
+      id: updatedBooking.id,
+      location: updatedBooking.location,
+      uid: updatedBooking.uid,
+    },
+    triggerForUser: !eventType?.teamId || (eventType?.teamId && eventType?.parentId),
+    organizerUser: { id: user.id },
+    eventTypeId: eventType?.id ?? null,
+    teamId: eventType?.teamId,
+    orgId: user.organizationId,
+  });
 
   return { isBookingAlreadyAcceptedBySomeoneElse, meetingUrl: locationVideoCallUrl };
 };

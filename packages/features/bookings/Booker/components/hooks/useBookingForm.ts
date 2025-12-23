@@ -12,7 +12,7 @@ import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { useInitialFormValues } from "./useInitialFormValues";
 
 export interface IUseBookingForm {
-  event?: Pick<BookerEvent, "bookingFields"> | null;
+  event?: Pick<BookerEvent, "bookingFields" | "team" | "owner"> | null;
   sessionEmail?: string | null;
   sessionName?: string | null;
   sessionUsername?: string | null;
@@ -22,6 +22,7 @@ export interface IUseBookingForm {
     guests: string[];
     name: string | null;
   };
+  clientId?: string;
 }
 
 export type UseBookingFormReturnType = ReturnType<typeof useBookingForm>;
@@ -34,6 +35,7 @@ export const useBookingForm = ({
   hasSession,
   extraOptions,
   prefillFormParams,
+  clientId,
 }: IUseBookingForm) => {
   const rescheduleUid = useBookerStore((state) => state.rescheduleUid);
   const bookingData = useBookerStore((state) => state.bookingData);
@@ -46,6 +48,7 @@ export const useBookingForm = ({
         ? getBookingResponsesSchema({
             bookingFields: event.bookingFields,
             view: rescheduleUid ? "reschedule" : "booking",
+            translateFn: (key: string, options?: Record<string, unknown>) => t(key, options ?? {}),
           })
         : // Fallback until event is loaded.
           z.object({}),
@@ -58,10 +61,11 @@ export const useBookingForm = ({
     // Key is not really part of form values, but only used to have a key
     // to set generic error messages on. Needed until RHF has implemented root error keys.
     globalError: undefined;
+    cfToken?: string;
   };
   const isRescheduling = !!rescheduleUid && !!bookingData;
 
-  const { initialValues, key } = useInitialFormValues({
+  const { values: initialValues, key } = useInitialFormValues({
     eventType: event,
     rescheduleUid,
     isRescheduling,
@@ -71,6 +75,7 @@ export const useBookingForm = ({
     hasSession,
     extraOptions,
     prefillFormParams,
+    clientId,
   });
 
   const bookingForm = useForm<BookingFormValues>({

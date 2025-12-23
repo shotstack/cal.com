@@ -1,105 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-/**
-* Add css variables here as well for light mode in addition to tailwind.config to avoid FOUC
-*/
-:root {
-  /* background */
-
-  --cal-bg-emphasis: hsla(220,13%,91%,1);
-  --cal-bg: hsla(0,0%,100%,1);
-  --cal-bg-subtle: hsla(220, 14%, 96%,1);
-  --cal-bg-muted: hsla(210,20%,98%,1);
-  --cal-bg-inverted: hsla(0,0%,6%,1);
-
-  /* background -> components*/
-  --cal-bg-info: hsla(218,83%,98%,1);
-  --cal-bg-success: hsla(134,76%,94%,1);
-  --cal-bg-attention: hsla(37, 86%, 92%, 1);
-  --cal-bg-error: hsla(3,66%,93%,1);
-  --cal-bg-dark-error: hsla(2, 55%, 30%, 1);
-
-  /* Borders */
-  --cal-border-emphasis: hsla(218, 11%, 65%, 1);
-  --cal-border: hsla(216, 12%, 84%, 1);
-  --cal-border-subtle: hsla(220, 13%, 91%, 1);
-  --cal-border-booker: #e5e7eb;
-  --cal-border-muted: hsla(220, 14%, 96%, 1);
-  --cal-border-error: hsla(4, 63%, 41%, 1);
-  --cal-border-focus: hsla(0, 0%, 10%, 1);
-
-  /* Content/Text */
-  --cal-text-emphasis: hsla(217, 19%, 27%, 1);
-  --cal-text: hsla(217, 19%, 27%, 1);
-  --cal-text-subtle: hsla(220, 9%, 46%, 1);
-  --cal-text-muted: hsla(218, 11%, 65%, 1);
-  --cal-text-inverted: hsla(0, 0%, 100%, 1);
-
-  /* Content/Text -> components */
-  --cal-text-info: hsla(228, 56%, 33%, 1);
-  --cal-text-success: hsla(133, 34%, 24%, 1);
-  --cal-text-attention: hsla(16, 62%, 28%, 1);
-  --cal-text-error: hsla(2, 55%, 30%, 1);
-
-  /* Brand shinanigans
-      -> These will be computed for the users theme at runtime.
-    */
-  --cal-brand: hsla(221, 39%, 11%, 1);
-  --cal-brand-emphasis: hsla(0, 0%, 6%, 1);
-  --cal-brand-text: hsla(0, 0%, 100%, 1);
-}
-.dark {
-  /* background */
-
-  --cal-bg-emphasis: hsla(0, 0%, 25%, 1);
-  --cal-bg: hsla(0, 0%, 10%, 1);
-  --cal-bg-subtle: hsla(0, 0%, 18%, 1);
-  --cal-bg-muted: hsla(0, 0%, 12%, 1);
-  --cal-bg-inverted: hsla(220, 14%, 96%, 1);
-
-  /* background -> components*/
-  --cal-bg-info: hsla(228, 56%, 33%, 1);
-  --cal-bg-success: hsla(133, 34%, 24%, 1);
-  --cal-bg-attention: hsla(16, 62%, 28%, 1);
-  --cal-bg-error: hsla(2, 55%, 30%, 1);
-  --cal-bg-dark-error: hsla(2, 55%, 30%, 1);
-
-  /* Borders */
-  --cal-border-emphasis: hsla(0, 0%, 46%, 1);
-  --cal-border: hsla(0, 0%, 34%, 1);
-  --cal-border-subtle: hsla(0, 0%, 22%, 1);
-  --cal-border-booker: hsla(0, 0%, 22%, 1);
-  --cal-border-muted: hsla(0, 0%, 18%, 1);
-  --cal-border-error: hsla(4, 63%, 41%, 1);
-  --cal-border-focus: hsla(0, 0%, 100%, 1);
-
-  /* Content/Text */
-  --cal-text-emphasis: hsla(240, 20%, 99%, 1);
-  --cal-text: hsla(0, 0%, 84%, 1);
-  --cal-text-subtle: hsla(0, 0%, 65%, 1);
-  --cal-text-muted: hsla(0, 0%, 34%, 1);
-  --cal-text-inverted: hsla(0, 0%, 10%, 1);
-
-  /* Content/Text -> components */
-  --cal-text-info: hsla(218, 83%, 93%, 1);
-  --cal-text-success: hsla(134, 76%, 94%, 1);
-  --cal-text-attention: hsla(37, 86%, 92%, 1);
-  --cal-text-error: hsla(3, 66%, 93%, 1);
-
-  /* Brand shenanigans
-      -> These will be computed for the users theme at runtime.
-    */
-  --cal-brand: hsla(0, 0%, 100%, 1);
-  --cal-brand-emphasis: hsla(218, 11%, 65%, 1);
-  --cal-brand-text: hsla(0, 0%, 0%,1);
-}
-
-@layer base {
-  * {
-    @apply border-default
-  }
-}
+@import "tailwindcss";
+@import "../../../packages/config/theme/shared-sources.css";
+@import "../../../packages/config/theme/tokens.css";
+@import "../../../packages/coss-ui/src/styles/globals.css";
+@import "./raqb.css";
 
 ::-moz-selection {
   color: var(--cal-brand-text);
@@ -111,7 +14,7 @@
   background: var(--cal-brand);
 }
 
-body  {
+body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
@@ -121,7 +24,7 @@ body  {
     https://docs.todesktop.com/
 */
 
-html.todesktop-platform-win32 .todesktop\:\!bg-transparent{
+html.todesktop-platform-win32 .todesktop\:\!bg-transparent {
   background: inherit !important;
 }
 
@@ -154,7 +57,8 @@ html.todesktop header a {
   -webkit-app-region: no-drag;
 }
 
-html.todesktop-platform-darwin body, html.todesktop-platform-darwin aside {
+html.todesktop-platform-darwin body,
+html.todesktop-platform-darwin aside {
   background: transparent !important;
 }
 
@@ -191,29 +95,59 @@ html.todesktop.dark {
   }
 }
 
+/**
+ * Legacy space-y-* utilities for Tailwind v4 compatibility
+ *
+ * Tailwind v4 changed the selector used by space-x-* and space-y-* utilities to address
+ * performance issues on large pages. The selector changed from:
+ *
+ *   .space-y-4 > :not([hidden]) ~ :not([hidden]) { margin-top: 1rem; }
+ *
+ * to:
+ *
+ *   .space-y-4 > :not(:last-child) { margin-bottom: 1rem; }
+ *
+ * These `.stack-y-*` utilities recreate the pre-v4 behavior using the old selector pattern
+ * (`:not([hidden]) ~ :not([hidden])` with `margin-top`) for cases where the new behavior
+ * causes layout issues.
+ *
+ * Usage: <div class="stack-y-4"> or <div class="lg:stack-y-6">
+ * Supports all spacing values: stack-y-0, stack-y-0.5, stack-y-1, stack-y-1.5, stack-y-2, etc.
+ *
+ * Reference: https://tailwindcss.com/docs/upgrade-guide#space-between-selector
+ */
+@utility stack-y-* {
+  & > :not([hidden]) ~ :not([hidden]) {
+    margin-top: --spacing(--value(integer));
+    margin-top: --value([length]);
+  }
+}
+
 /*
  * Override the default tailwindcss-forms styling (default is: 'colors.blue.600')
  * @see: https://github.com/tailwindlabs/tailwindcss-forms/issues/14#issuecomment-1005376006
  */
-[type="text"]:focus,
-[type="email"]:focus,
-[type="url"]:focus,
-[type="password"]:focus,
-[type="number"]:focus,
-[type="date"]:focus,
-[type="datetime-local"]:focus,
-[type="month"]:focus,
-[type="search"]:focus,
-[type="tel"]:focus,
-[type="checkbox"]:focus,
-[type="radio"]:focus,
-[type="time"]:focus,
-[type="week"]:focus,
-[multiple]:focus,
-textarea:focus,
-select:focus {
-  --tw-ring-color: var(--brand-color);
-  border-color: var(--brand-color);
+ @layer base {
+  [type="text"]:focus,
+  [type="email"]:focus,
+  [type="url"]:focus,
+  [type="password"]:focus,
+  [type="number"]:focus,
+  [type="date"]:focus,
+  [type="datetime-local"]:focus,
+  [type="month"]:focus,
+  [type="search"]:focus,
+  [type="tel"]:focus,
+  [type="checkbox"]:focus,
+  [type="radio"]:focus,
+  [type="time"]:focus,
+  [type="week"]:focus,
+  [multiple]:focus,
+  textarea:focus,
+  select:focus {
+    --tw-ring-color: var(--brand-color);
+    border-color: var(--brand-color);
+  }
 }
 
 @layer components {
@@ -234,7 +168,7 @@ select:focus {
   }
 
   .slider > .slider-track {
-    @apply relative h-1 flex-grow rounded-md bg-gray-400;
+    @apply relative h-1 grow rounded-md bg-gray-400;
   }
 
   .slider .slider-range {
@@ -287,7 +221,7 @@ select:focus {
   font-size: inherit !important;
   font-weight: inherit !important;
   color: #000;
-  padding: 11px ​11px 9px !important;
+  padding: 11px 11px 9px !important;
   line-height: 16px !important;
 }
 
@@ -295,7 +229,7 @@ select:focus {
   border: 2px solid #000 !important;
   border-radius: 2px !important;
   box-shadow: none !important;
-  padding: 10px ​10px 9px !important;
+  padding: 10px 10px 9px !important;
 }
 
 .DateRangePickerInput_arrow {
@@ -468,18 +402,23 @@ select:focus {
 
 .react-tel-input .country-list .country:hover,
 .react-tel-input .country-list .country.highlight {
-  @apply !bg-emphasis;
+  @apply bg-emphasis!;
 }
 
 .react-tel-input .flag-dropdown .selected-flag,
 .react-tel-input .flag-dropdown.open .selected-flag {
-  @apply !bg-default;
+  @apply bg-default!;
 }
 
 .react-tel-input .flag-dropdown {
-  @apply !border-r-default left-0.5 !border-y-0 !border-l-0;
+  @apply border-r-default! left-0.5 border-y-0! border-l-0!;
 }
 
-.intercom-lightweight-app  {
-  @apply z-40 !important;
+[data-radix-popper-content-wrapper] {
+  border: none;
+}
+
+html[dir="rtl"] .react-tel-input .flag-dropdown {
+  left: auto !important;
+  right: 0 !important;
 }

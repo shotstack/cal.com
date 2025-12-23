@@ -1,10 +1,10 @@
 import { useAutoAnimate } from "@formkit/auto-animate/react";
 import type { ReactNode } from "react";
 
-import { classNames } from "@calcom/lib";
+import classNames from "@calcom/ui/classNames";
 
-import { Label } from "..";
-import Switch from "./Switch";
+import { Label } from "../inputs/Label";
+import { Switch } from "./Switch";
 
 type Props = {
   children?: ReactNode;
@@ -22,9 +22,11 @@ type Props = {
   switchContainerClassName?: string;
   labelClassName?: string;
   descriptionClassName?: string;
+  noIndentation?: boolean;
+  hideSwitch?: boolean;
 };
 
-function SettingsToggle({
+export function SettingsToggle({
   checked,
   onCheckedChange,
   description,
@@ -39,13 +41,15 @@ function SettingsToggle({
   switchContainerClassName,
   labelClassName,
   descriptionClassName,
+  noIndentation = false,
+  hideSwitch,
   ...rest
 }: Props) {
   const [animateRef] = useAutoAnimate<HTMLDivElement>();
 
   return (
     <>
-      <div className="flex w-full flex-col space-y-4 lg:flex-row lg:space-x-4 lg:space-y-0">
+      <div className="flex w-full flex-col stack-y-4 lg:flex-row lg:space-x-4 lg:stack-y-0">
         <fieldset className="block w-full flex-col sm:flex">
           {toggleSwitchAtTheEnd ? (
             <div
@@ -75,16 +79,18 @@ function SettingsToggle({
                   </p>
                 )}
               </div>
-              <div className="my-auto h-full">
-                <Switch
-                  data-testid={rest["data-testid"]}
-                  fitToHeight={true}
-                  checked={checked}
-                  onCheckedChange={onCheckedChange}
-                  disabled={disabled}
-                  tooltip={tooltip}
-                />
-              </div>
+              {!hideSwitch && (
+                <div className="my-auto h-full">
+                  <Switch
+                    data-testid={rest["data-testid"]}
+                    fitToHeight={true}
+                    checked={checked}
+                    onCheckedChange={onCheckedChange}
+                    disabled={disabled}
+                    tooltip={tooltip}
+                  />
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex space-x-3">
@@ -100,7 +106,7 @@ function SettingsToggle({
               <div>
                 <Label
                   className={classNames("text-emphasis text-sm font-semibold leading-none", labelClassName)}>
-                  {title}
+                  {title} {Badge ? Badge : null}
                   {LockedIcon}
                 </Label>
                 {description && <p className="text-default -mt-1.5 text-sm leading-normal">{description}</p>}
@@ -108,7 +114,7 @@ function SettingsToggle({
             </div>
           )}
           {children && (
-            <div className={classNames("lg:ml-14", childrenClassName)} ref={animateRef}>
+            <div className={classNames(noIndentation ? "" : "lg:ml-14", childrenClassName)} ref={animateRef}>
               {checked && <div className={classNames(!toggleSwitchAtTheEnd && "mt-4")}>{children}</div>}
             </div>
           )}
@@ -117,5 +123,3 @@ function SettingsToggle({
     </>
   );
 }
-
-export default SettingsToggle;

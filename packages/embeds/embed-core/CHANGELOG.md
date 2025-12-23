@@ -1,5 +1,23 @@
 # @calcom/embed-core
 
+## 1.5.3
+
+### Patch Changes
+
+- Added react-19 as peer dependency
+
+## 1.5.2
+
+### Patch Changes
+
+- Bundle size reduction for embed-react
+
+## 1.5.1
+
+### Patch Changes
+
+- Ships latest types of new events added like bookingSuccessfulV2
+
 ## 1.5.0
 
 ### Minor Changes

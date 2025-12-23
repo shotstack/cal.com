@@ -1,11 +1,13 @@
-import { isOrganisationAdmin } from "@calcom/lib/server/queries/organisations";
+import { TeamRepository } from "@calcom/ee/teams/repositories/TeamRepository";
+import { updateNewTeamMemberEventTypes } from "@calcom/features/ee/teams/lib/queries";
+import { PermissionCheckService } from "@calcom/features/pbac/services/permission-check.service";
 import { prisma } from "@calcom/prisma";
 import type { Prisma } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
 
 import { TRPCError } from "@trpc/server";
 
-import type { TrpcSessionUser } from "../../../trpc";
+import type { TrpcSessionUser } from "../../../types";
 import type { TAddMembersToTeams } from "./addMembersToTeams.schema";
 
 interface AddBulkToTeamProps {
@@ -16,9 +18,36 @@ interface AddBulkToTeamProps {
 export const addMembersToTeams = async ({ user, input }: AddBulkToTeamProps) => {
   if (!user.organizationId) throw new TRPCError({ code: "UNAUTHORIZED" });
 
-  // check if user is admin of organization
-  if (!(await isOrganisationAdmin(user?.id, user.organizationId)))
-    throw new TRPCError({ code: "UNAUTHORIZED" });
+  const teamRepository = new TeamRepository(prisma);
+  const teamsNotBelongingToOrg = await teamRepository.findTeamsNotBelongingToOrgByIds({
+    teamIds: input.teamIds,
+    orgId: user.organizationId,
+  });
+
+  if (teamsNotBelongingToOrg.length > 0) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `One or more teams do not belong to your organization: ${teamsNotBelongingToOrg
+        .map((team) => team.id)
+        .join(", ")}`,
+    });
+  }
+
+  // Check if user has permission to invite team members in the organization
+  const permissionCheckService = new PermissionCheckService();
+  const hasPermission = await permissionCheckService.checkPermission({
+    userId: user.id,
+    teamId: user.organizationId,
+    permission: "team.invite",
+    fallbackRoles: [MembershipRole.OWNER, MembershipRole.ADMIN],
+  });
+
+  if (!hasPermission) {
+    throw new TRPCError({
+      code: "UNAUTHORIZED",
+      message: "You are not authorized to add members to teams in this organization",
+    });
+  }
 
   const usersInOrganization = await prisma.membership.findMany({
     where: {
@@ -64,6 +93,7 @@ export const addMembersToTeams = async ({ user, input }: AddBulkToTeamProps) => 
       const userMembership = usersInOrganization.find((membership) => membership.userId === userId);
       const accepted = userMembership && userMembership.accepted;
       return {
+        createdAt: new Date(),
         userId,
         teamId,
         role: MembershipRole.MEMBER,
@@ -74,6 +104,10 @@ export const addMembersToTeams = async ({ user, input }: AddBulkToTeamProps) => 
 
   await prisma.membership.createMany({
     data: membershipData,
+  });
+
+  membershipData.forEach(async ({ userId, teamId }) => {
+    await updateNewTeamMemberEventTypes(userId, teamId);
   });
 
   return {

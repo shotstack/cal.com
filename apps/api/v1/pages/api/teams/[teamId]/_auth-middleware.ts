@@ -1,8 +1,8 @@
-import type { Prisma } from "@prisma/client";
 import type { NextApiRequest } from "next";
 
 import { HttpError } from "@calcom/lib/http-error";
 import prisma from "@calcom/prisma";
+import type { Prisma } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
 
 import { schemaQueryTeamId } from "~/lib/validations/shared/queryTeamId";
@@ -41,7 +41,7 @@ export async function canUserAccessTeamWithRole(
   /** If not ADMIN then we check if the actual user belongs to team and matches the required role */
   if (!isSystemWideAdmin) args.where = { ...args.where, members: { some: { userId, role } } };
   const team = await prisma.team.findFirst(args);
-  if (!team) throw new HttpError({ statusCode: 401, message: `Unauthorized: ${role.toString()} required` });
+  if (!team) throw new HttpError({ statusCode: 401, message: `Unauthorized: OWNER or ADMIN role required` });
   return team;
 }
 

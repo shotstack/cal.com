@@ -11,21 +11,20 @@ import {
   useRegisterActions,
 } from "kbar";
 import { useRouter } from "next/navigation";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { appStoreMetadata } from "@calcom/app-store/appStoreMetaData";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { isMac } from "@calcom/lib/isMac";
 import { trpc } from "@calcom/trpc/react";
-import type { RouterOutputs } from "@calcom/trpc/react";
-import { Icon, Tooltip } from "@calcom/ui";
+import { Icon } from "@calcom/ui/components/icon";
+import { Tooltip } from "@calcom/ui/components/tooltip";
+
+import { MintlifyChat } from "../mintlify-chat/MintlifyChat";
 
 type shortcutArrayType = {
   shortcuts?: string[];
 };
-
-type EventTypeGroups = RouterOutputs["viewer"]["eventTypes"]["getByViewer"]["eventTypeGroups"];
-type EventTypeGroup = EventTypeGroups[number];
 
 const getApps = Object.values(appStoreMetadata).map(({ name, slug }) => ({
   id: slug,
@@ -239,7 +238,6 @@ export const KBarRoot = ({ children }: { children: React.ReactNode }) => {
       },
       ...appStoreActions,
     ];
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return <KBarProvider actions={actions}>{children}</KBarProvider>;
@@ -248,17 +246,31 @@ export const KBarRoot = ({ children }: { children: React.ReactNode }) => {
 export const KBarContent = () => {
   const { t } = useLocale();
   useEventTypesAction();
+  const [inputText, setInputText] = useState("");
+  const [aiResponse, setAiResponse] = useState("");
+  const showAiChat =
+    process.env.NEXT_PUBLIC_ENABLE_MINTLIFY_CHAT === "true" &&
+    !!process.env.NEXT_PUBLIC_CHAT_API_URL;
+
   return (
     <KBarPortal>
-      <KBarPositioner>
-        <KBarAnimator className="bg-default z-10 w-full max-w-screen-sm overflow-hidden rounded-md shadow-lg">
+      <KBarPositioner className="overflow-scroll">
+        <KBarAnimator className="bg-default z-10 w-full max-w-(--breakpoint-sm) overflow-hidden rounded-md shadow-lg">
           <div className="border-subtle flex items-center justify-center border-b">
             <Icon name="search" className="text-default mx-3 h-4 w-4" />
             <KBarSearch
               defaultPlaceholder={t("kbar_search_placeholder")}
-              className="bg-default placeholder:text-subtle text-default w-full rounded-sm py-2.5 focus-visible:outline-none"
+              className="bg-default placeholder:text-subtle text-default w-full rounded-sm py-2.5 focus-visible:outline-none px-0 border-0 focus:ring-0"
+              value={inputText}
+              onChange={(e) => {
+                setInputText(e.currentTarget.value.trim());
+                if (aiResponse) setAiResponse("");
+              }}
             />
           </div>
+          {showAiChat && inputText && (
+            <MintlifyChat aiResponse={aiResponse} setAiResponse={setAiResponse} searchText={inputText} />
+          )}
           <RenderResults />
           <div className="text-subtle border-subtle hidden items-center space-x-1 border-t px-2 py-1.5 text-xs sm:flex">
             <Icon name="arrow-up" className="h-4 w-4" />
@@ -270,7 +282,7 @@ export const KBarContent = () => {
             <span className="pr-2">{t("close")}</span>
           </div>
         </KBarAnimator>
-        <div className="z-1 fixed inset-0 bg-neutral-800 bg-opacity-70" />
+        <div className="z-1 fixed inset-0 bg-neutral-800/70" />
       </KBarPositioner>
     </KBarPortal>
   );
@@ -285,7 +297,7 @@ export const KBarTrigger = () => {
           color="minimal"
           onClick={query.toggle}
           className="text-default hover:bg-subtle todesktop:hover:!bg-transparent lg:hover:bg-emphasis lg:hover:text-emphasis group flex rounded-md px-3 py-2 text-sm font-medium transition lg:px-2">
-          <Icon name="search" className="h-4 w-4 flex-shrink-0 text-inherit" />
+          <Icon name="search" className="h-4 w-4 shrink-0 text-inherit" />
         </button>
       </Tooltip>
     </>

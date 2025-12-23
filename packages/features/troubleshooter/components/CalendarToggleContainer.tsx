@@ -1,6 +1,8 @@
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import { Badge, Button, Switch } from "@calcom/ui";
+import { Badge } from "@calcom/ui/components/badge";
+import { Button } from "@calcom/ui/components/button";
+import { Switch } from "@calcom/ui/components/form";
 
 import { TroubleshooterListItemContainer } from "./TroubleshooterListItemContainer";
 
@@ -79,12 +81,12 @@ function EmptyCalendarToggleItem() {
 
 export function CalendarToggleContainer() {
   const { t } = useLocale();
-  const { data, isLoading } = trpc.viewer.connectedCalendars.useQuery();
+  const { data, isLoading } = trpc.viewer.calendars.connectedCalendars.useQuery();
 
   const hasConnectedCalendars = data && data?.connectedCalendars.length > 0;
 
   return (
-    <div className="flex flex-col space-y-3">
+    <div className="flex flex-col stack-y-3">
       <p className="text-sm font-medium leading-none">{t("calendars_were_checking_for_conflicts")}</p>
       {hasConnectedCalendars && !isLoading ? (
         <>

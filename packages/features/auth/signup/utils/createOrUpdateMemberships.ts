@@ -1,5 +1,5 @@
-import { updateNewTeamMemberEventTypes } from "@calcom/lib/server/queries";
-import { ProfileRepository } from "@calcom/lib/server/repository/profile";
+import { updateNewTeamMemberEventTypes } from "@calcom/features/ee/teams/lib/queries";
+import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
 import { prisma } from "@calcom/prisma";
 import type { Team, User, OrganizationSettings } from "@calcom/prisma/client";
 import { MembershipRole } from "@calcom/prisma/enums";
@@ -12,7 +12,7 @@ export const createOrUpdateMemberships = async ({
 }: {
   user: Pick<User, "id">;
   team: Pick<Team, "id" | "parentId" | "isOrganization"> & {
-    organizationSettings: OrganizationSettings | null;
+    organizationSettings?: Pick<OrganizationSettings, "orgAutoAcceptEmail"> | null;
   };
 }) => {
   return await prisma.$transaction(async (tx) => {

@@ -1,8 +1,9 @@
 import { z } from "zod";
 
-import { checkUsername } from "@calcom/lib/server/checkUsername";
-import { _UserModel as User } from "@calcom/prisma/zod";
+import { checkUsername } from "@calcom/features/profile/lib/checkUsername";
+import { emailSchema } from "@calcom/lib/emailSchema";
 import { iso8601 } from "@calcom/prisma/zod-utils";
+import { UserSchema } from "@calcom/prisma/zod/modelSchema/UserSchema";
 
 import { isValidBase64Image } from "~/lib/utils/isValidBase64Image";
 import { timeZone } from "~/lib/validations/shared/timeZone";
@@ -42,6 +43,7 @@ enum locales {
   SR = "sr",
   SV = "sv",
   VI = "vi",
+  BN = "bn",
 }
 enum theme {
   DARK = "dark",
@@ -66,7 +68,7 @@ const usernameSchema = z
   });
 
 // @note: These are the values that are editable via PATCH method on the user Model
-export const schemaUserBaseBodyParams = User.pick({
+export const schemaUserBaseBodyParams = UserSchema.pick({
   name: true,
   email: true,
   username: true,
@@ -92,7 +94,7 @@ export const schemaUserBaseBodyParams = User.pick({
 // Here we can both require or not (adding optional or nullish) and also rewrite validations for any value
 // for example making weekStart only accept weekdays as input
 const schemaUserEditParams = z.object({
-  email: z.string().email().toLowerCase(),
+  email: emailSchema.toLowerCase(),
   username: usernameSchema,
   weekStart: z.nativeEnum(weekdays).optional(),
   brandColor: z.string().min(4).max(9).regex(/^#/).optional(),
@@ -112,10 +114,10 @@ const schemaUserEditParams = z.object({
 });
 
 // @note: These are the values that are editable via PATCH method on the user Model,
-// merging both BaseBodyParams with RequiredParams, and omiting whatever we want at the end.
+// merging both BaseBodyParams with RequiredParams, and omitting whatever we want at the end.
 
 const schemaUserCreateParams = z.object({
-  email: z.string().email().toLowerCase(),
+  email: emailSchema.toLowerCase(),
   username: usernameSchema,
   weekStart: z.nativeEnum(weekdays).optional(),
   brandColor: z.string().min(4).max(9).regex(/^#/).optional(),
@@ -136,7 +138,7 @@ const schemaUserCreateParams = z.object({
 });
 
 // @note: These are the values that are editable via PATCH method on the user Model,
-// merging both BaseBodyParams with RequiredParams, and omiting whatever we want at the end.
+// merging both BaseBodyParams with RequiredParams, and omitting whatever we want at the end.
 export const schemaUserEditBodyParams = schemaUserBaseBodyParams
   .merge(schemaUserEditParams)
   .omit({})
@@ -149,14 +151,15 @@ export const schemaUserCreateBodyParams = schemaUserBaseBodyParams
   .strict();
 
 // @note: These are the values that are always returned when reading a user
-export const schemaUserReadPublic = User.pick({
+// Note: We pick avatarUrl from the Prisma schema and extend with avatar for API v1 backward compatibility
+export const schemaUserReadPublic = UserSchema.pick({
   id: true,
   username: true,
   name: true,
   email: true,
   emailVerified: true,
   bio: true,
-  avatar: true,
+  avatarUrl: true,
   timeZone: true,
   weekStart: true,
   endTime: true,
@@ -174,6 +177,9 @@ export const schemaUserReadPublic = User.pick({
   verified: true,
   invitedTo: true,
   role: true,
+}).extend({
+  // API v1 backward compatibility: expose avatarUrl as avatar
+  avatar: UserSchema.shape.avatarUrl,
 });
 
 export const schemaUsersReadPublic = z.array(schemaUserReadPublic);

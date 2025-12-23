@@ -6,8 +6,7 @@ import { UserPermissionRole, MembershipRole } from "@calcom/prisma/enums";
 import { ScopeOfAdmin } from "./scopeOfAdmin";
 
 export const isAdminGuard = async (req: NextApiRequest) => {
-  const { userId } = req;
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+  const { user, userId } = req;
   if (!user) return { isAdmin: false, scope: null };
 
   const { role: userRole } = user;
@@ -17,13 +16,15 @@ export const isAdminGuard = async (req: NextApiRequest) => {
     where: {
       userId: userId,
       accepted: true,
+      role: {
+        in: [MembershipRole.OWNER, MembershipRole.ADMIN],
+      },
       team: {
         isOrganization: true,
         organizationSettings: {
           isAdminAPIEnabled: true,
         },
       },
-      OR: [{ role: MembershipRole.OWNER }, { role: MembershipRole.ADMIN }],
     },
     select: {
       team: {
@@ -34,7 +35,7 @@ export const isAdminGuard = async (req: NextApiRequest) => {
       },
     },
   });
-  if (!orgOwnerOrAdminMemberships.length) return { isAdmin: false, scope: null };
+  if (orgOwnerOrAdminMemberships.length > 0) return { isAdmin: true, scope: ScopeOfAdmin.OrgOwnerOrAdmin };
 
-  return { isAdmin: true, scope: ScopeOfAdmin.OrgOwnerOrAdmin };
+  return { isAdmin: false, scope: null };
 };

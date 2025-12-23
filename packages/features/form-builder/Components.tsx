@@ -6,25 +6,19 @@ import type {
   TextLikeComponentProps,
 } from "@calcom/app-store/routing-forms/components/react-awesome-query-builder/widgets";
 import Widgets from "@calcom/app-store/routing-forms/components/react-awesome-query-builder/widgets";
+import PhoneInput from "@calcom/features/components/phone-input";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import {
-  AddressInput,
-  Button,
-  CheckboxField,
-  EmailField,
-  Group,
-  Icon,
-  InfoBadge,
-  InputField,
-  Label,
-  PhoneInput,
-  RadioField,
-  Tooltip,
-} from "@calcom/ui";
+import type { fieldSchema, variantsConfigSchema, FieldType } from "@calcom/prisma/zod-utils";
+import { AddressInput } from "@calcom/ui/components/address";
+import { InfoBadge } from "@calcom/ui/components/badge";
+import { Button } from "@calcom/ui/components/button";
+import { Label, CheckboxField, EmailField, InputField, Checkbox } from "@calcom/ui/components/form";
+import { Icon } from "@calcom/ui/components/icon";
+import { RadioGroup, RadioField } from "@calcom/ui/components/radio";
+import { Tooltip } from "@calcom/ui/components/tooltip";
 
 import { ComponentForField } from "./FormBuilderField";
 import { propsTypes } from "./propsTypes";
-import type { fieldSchema, FieldType, variantsConfigSchema } from "./schema";
 import { preprocessNameFieldDataWithVariant } from "./utils";
 
 export const isValidValueProp: Record<Component["propsType"], (val: unknown) => boolean> = {
@@ -151,6 +145,7 @@ export const Components: Record<FieldType, Component> = {
             value={value}
             required={variantField.required}
             type="text"
+            autoComplete="name"
             onChange={(e) => {
               props.setValue(e.target.value);
             }}
@@ -169,7 +164,7 @@ export const Components: Record<FieldType, Component> = {
           {variant.fields.map((variantField) => (
             <InputField
               // Because the container is flex(and thus margin is being computed towards container height), I need to explicitly ensure that margin-bottom for the input becomes 0, which is mb-2 otherwise
-              className="!mb-0"
+              className="mb-0!"
               showAsteriskIndicator={true}
               key={variantField.name}
               name={variantField.name}
@@ -180,6 +175,13 @@ export const Components: Record<FieldType, Component> = {
               value={value[variantField.name as keyof typeof value]}
               required={variantField.required}
               type="text"
+              autoComplete={
+                variantField.name === "firstName"
+                  ? "given-name"
+                  : variantField.name === "lastName"
+                  ? "family-name"
+                  : undefined
+              }
               onChange={(e) => onChange(variantField.name, e.target.value)}
             />
           ))}
@@ -211,7 +213,17 @@ export const Components: Record<FieldType, Component> = {
       if (!props) {
         return <div />;
       }
-      return <Widgets.TextWidget type="email" id={props.name} noLabel={true} {...props} />;
+
+      return (
+        <InputField
+          type="email"
+          id={props.name}
+          noLabel={true}
+          autoComplete="email"
+          {...props}
+          onChange={(e) => props.setValue(e.target.value)}
+        />
+      );
     },
   },
   address: {
@@ -236,8 +248,6 @@ export const Components: Record<FieldType, Component> = {
       const placeholder = props.placeholder;
       const { t } = useLocale();
       value = value || [];
-      const inputClassName =
-        "dark:placeholder:text-muted focus:border-emphasis border-subtle block w-full rounded-md border-default text-sm focus:ring-black disabled:bg-emphasis disabled:hover:cursor-not-allowed dark:selection:bg-green-500 disabled:dark:text-subtle bg-default";
       return (
         <>
           {value.length ? (
@@ -252,9 +262,8 @@ export const Components: Record<FieldType, Component> = {
                       id={`${props.name}.${index}`}
                       disabled={readOnly}
                       value={value[index]}
-                      className={inputClassName}
                       onChange={(e) => {
-                        value[index] = e.target.value;
+                        value[index] = e.target.value.toLowerCase();
                         setValue(value);
                       }}
                       placeholder={placeholder}
@@ -306,8 +315,8 @@ export const Components: Record<FieldType, Component> = {
                 value.push("");
                 setValue(value);
               }}
-              className="mr-auto">
-              {label}
+              className="mr-auto h-fit whitespace-normal text-left">
+              <span className="flex-1">{label}</span>
             </Button>
           )}
         </>
@@ -343,17 +352,15 @@ export const Components: Record<FieldType, Component> = {
           {options.map((option, i) => {
             return (
               <label key={i} className="block">
-                <input
-                  type="checkbox"
+                <Checkbox
                   disabled={readOnly}
-                  onChange={(e) => {
+                  onCheckedChange={(checked) => {
                     const newValue = value.filter((v) => v !== option.value);
-                    if (e.target.checked) {
+                    if (checked) {
                       newValue.push(option.value);
                     }
                     setValue(newValue);
                   }}
-                  className="border-default dark:border-default hover:bg-subtle checked:hover:bg-brand-default checked:bg-brand-default dark:checked:bg-brand-default dark:bg-darkgray-100 dark:hover:bg-subtle dark:checked:hover:bg-brand-default h-4 w-4 cursor-pointer rounded transition ltr:mr-2 rtl:ml-2"
                   value={option.value}
                   checked={value.includes(option.value)}
                 />
@@ -369,7 +376,7 @@ export const Components: Record<FieldType, Component> = {
     propsType: propsTypes.radio,
     factory: ({ setValue, name, value, options, readOnly }) => {
       return (
-        <Group
+        <RadioGroup
           disabled={readOnly}
           value={value}
           onValueChange={(e) => {
@@ -385,7 +392,7 @@ export const Components: Record<FieldType, Component> = {
               />
             ))}
           </>
-        </Group>
+        </RadioGroup>
       );
     },
   },
@@ -445,7 +452,7 @@ export const Components: Record<FieldType, Component> = {
                         type="radio"
                         disabled={readOnly}
                         name={name}
-                        className="bg-default after:bg-default border-emphasis focus:ring-brand-default hover:bg-subtle hover:after:bg-subtle dark:checked:after:bg-brand-accent flex h-4 w-4 cursor-pointer items-center justify-center text-[--cal-brand] transition after:h-[6px] after:w-[6px] after:rounded-full after:content-[''] after:hover:block focus:ring-2 focus:ring-offset-0 ltr:mr-2 rtl:ml-2 dark:checked:hover:text-[--cal-brand]"
+                        className="bg-default after:bg-default border-emphasis hover:bg-subtle hover:after:bg-subtle checked:bg-brand-default checked:hover:bg-brand-default checked:after:bg-default dark:checked:bg-brand-default dark:checked:after:bg-brand-accent dark:hover:bg-subtle dark:checked:hover:bg-brand-default text-(--cal-brand) flex h-4 w-4 cursor-pointer items-center justify-center transition after:h-[6px] after:w-[6px] after:rounded-full after:content-[''] after:hover:block focus:ring-0 focus:ring-offset-0 focus:outline-none ltr:mr-2 rtl:ml-2"
                         value={option.value}
                         onChange={(e) => {
                           setValue({
@@ -545,8 +552,8 @@ export const Components: Record<FieldType, Component> = {
   url: {
     propsType: propsTypes.url,
     factory: (props) => {
-      return <Widgets.TextWidget type="url" noLabel={true} {...props} />;
+      return <Widgets.TextWidget type="url" autoComplete="url" noLabel={true} {...props} />;
     },
   },
 } as const;
-// Should use `statisfies` to check if the `type` is from supported types. But satisfies doesn't work with Next.js config
+// Should use `satisfies` to check if the `type` is from supported types. But satisfies doesn't work with Next.js config

@@ -1,10 +1,14 @@
+"use client";
+
 import { useSession } from "next-auth/react";
 import type { AriaRole, ComponentType } from "react";
 import React, { Fragment, useEffect } from "react";
 
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { EmptyScreen, Alert, Button } from "@calcom/ui";
+import { Alert } from "@calcom/ui/components/alert";
+import { Button } from "@calcom/ui/components/button";
+import { EmptyScreen } from "@calcom/ui/components/empty-screen";
 
 type LicenseRequiredProps = {
   as?: keyof JSX.IntrinsicElements | "";
@@ -41,7 +45,7 @@ const LicenseRequired = ({ children, as = "", ...rest }: LicenseRequiredProps) =
             title={
               <>
                 {t("enterprise_license_locally")} {t("enterprise_license_sales")}{" "}
-                <a className="underline" href="https://cal.com/sales">
+                <a className="underline" href="https://go.cal.com/get-license">
                   {t("contact_sales")}
                 </a>
               </>
@@ -54,7 +58,7 @@ const LicenseRequired = ({ children, as = "", ...rest }: LicenseRequiredProps) =
           Icon="triangle-alert"
           headline={t("enterprise_license")}
           buttonRaw={
-            <Button color="secondary" href="https://cal.com/sales">
+            <Button color="secondary" href="https://go.cal.com/get-license">
               {t(`contact_sales`)}
             </Button>
           }
@@ -70,9 +74,11 @@ export const withLicenseRequired =
   // eslint-disable-next-line react/display-name
   (hocProps: T) =>
     (
-      <LicenseRequired>
-        <Component {...hocProps} />
-      </LicenseRequired>
+      <div>
+        <LicenseRequired>
+          <Component {...hocProps} />
+        </LicenseRequired>
+      </div>
     );
 
 export default LicenseRequired;

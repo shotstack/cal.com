@@ -1,16 +1,15 @@
+/* eslint-disable */
 const { withAxiom } = require("next-axiom");
 const { withSentryConfig } = require("@sentry/nextjs");
+const { PrismaPlugin } = require("@prisma/nextjs-monorepo-workaround-plugin");
 
 const plugins = [withAxiom];
 
 /** @type {import("next").NextConfig} */
 const nextConfig = {
-  experimental: {
-    instrumentationHook: true,
-  },
+  turbopack: {},
   transpilePackages: [
     "@calcom/app-store",
-    "@calcom/core",
     "@calcom/dayjs",
     "@calcom/emails",
     "@calcom/features",
@@ -18,6 +17,12 @@ const nextConfig = {
     "@calcom/prisma",
     "@calcom/trpc",
   ],
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.plugins = [...config.plugins, new PrismaPlugin()];
+    }
+    return config;
+  },
   async headers() {
     return [
       {
@@ -47,7 +52,7 @@ const nextConfig = {
   async rewrites() {
     return {
       afterFiles: [
-        // This redirects requests recieved at / the root to the /api/ folder.
+        // This redirects requests received at / the root to the /api/ folder.
         {
           source: "/v:version/:rest*",
           destination: "/api/v:version/:rest*",
@@ -91,7 +96,7 @@ const nextConfig = {
   },
 };
 
-if (!!process.env.NEXT_PUBLIC_SENTRY_DSN) {
+if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
   plugins.push((nextConfig) =>
     withSentryConfig(nextConfig, {
       autoInstrumentServerFunctions: true,

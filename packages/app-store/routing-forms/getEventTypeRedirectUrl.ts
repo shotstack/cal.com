@@ -1,4 +1,5 @@
-import { CAL_URL } from "@calcom/lib/constants";
+import { WEBAPP_URL } from "@calcom/lib/constants";
+import type { Ensure } from "@calcom/types/utils";
 
 function getUserAndEventTypeSlug(eventTypeRedirectUrl: string) {
   if (eventTypeRedirectUrl.startsWith("/")) {
@@ -13,6 +14,8 @@ function getUserAndEventTypeSlug(eventTypeRedirectUrl: string) {
 }
 
 /**
+ * @param eventTypeRedirectUrl - The event path without a starting slash
+ *
  * Handles the following cases
  * 1. A team form where the team isn't a sub-team
  *    1.1 A team form where team isn't a sub-team and the user is migrated. i.e. User has been migrated but not the team
@@ -31,6 +34,7 @@ export function getAbsoluteEventTypeRedirectUrl({
   eventTypeRedirectUrl,
   form,
   allURLSearchParams,
+  isEmbed,
 }: {
   eventTypeRedirectUrl: string;
   form: {
@@ -54,9 +58,20 @@ export function getAbsoluteEventTypeRedirectUrl({
      * The origin for the team the form belongs to
      */
     teamOrigin: string;
+    /**
+     * The profile user who owns the form
+     */
+    user: {
+      /**
+       * Current username on the profile
+       */
+      username: string | null;
+    };
   };
   allURLSearchParams: URLSearchParams;
+  isEmbed?: boolean;
 }) {
+  eventTypeRedirectUrl = `${eventTypeRedirectUrl}${isEmbed ? "/embed" : ""}`;
   // It could be using the old(before migration) username/team-slug or it could be using the new one(after migration)
   // If it's using the old one, it would work by redirection as long as we use CAL_URL(which is non-org domain)
   // But if it's using the new one, it has to use the org domain.
@@ -71,18 +86,34 @@ export function getAbsoluteEventTypeRedirectUrl({
   if (teamSlugInRedirectUrl && form.nonOrgTeamslug) {
     const isEventTypeRedirectToOldTeamSlug = teamSlugInRedirectUrl === form.nonOrgTeamslug;
     if (isEventTypeRedirectToOldTeamSlug) {
-      return `${CAL_URL}/${eventTypeRedirectUrl}?${allURLSearchParams}`;
+      const joiner = eventTypeRedirectUrl.includes("?") ? "&" : "?";
+      return `${WEBAPP_URL}/${eventTypeRedirectUrl}${joiner}${allURLSearchParams}`;
     }
   }
 
   if (usernameInRedirectUrl && form.nonOrgUsername) {
-    const isEventTypeRedirectToOldUser = usernameInRedirectUrl === form.nonOrgUsername;
+    const hasSameProfileUsername = form.user?.username === form.nonOrgUsername;
+    const isEventTypeRedirectToOldUser =
+      !hasSameProfileUsername && usernameInRedirectUrl === form.nonOrgUsername;
     if (isEventTypeRedirectToOldUser) {
-      return `${CAL_URL}/${eventTypeRedirectUrl}?${allURLSearchParams}`;
+      const joiner = eventTypeRedirectUrl.includes("?") ? "&" : "?";
+      return `${WEBAPP_URL}/${eventTypeRedirectUrl}${joiner}${allURLSearchParams}`;
     }
   }
 
-  const origin = teamSlugInRedirectUrl ? form.teamOrigin : form.userOrigin;
+  // We want origin to be the WEBAPP_URL as in E2E the org domain won't exist. E2E fake request from org domain using doOnOrgDomain
+  const origin = process.env.NEXT_PUBLIC_IS_E2E
+    ? WEBAPP_URL
+    : teamSlugInRedirectUrl
+    ? form.teamOrigin
+    : form.userOrigin;
 
-  return `${origin}/${eventTypeRedirectUrl}?${allURLSearchParams}`;
+  const joiner = eventTypeRedirectUrl.includes("?") ? "&" : "?";
+  return `${origin}/${eventTypeRedirectUrl}${joiner}${allURLSearchParams}`;
+}
+
+export function getAbsoluteEventTypeRedirectUrlWithEmbedSupport(
+  args: Ensure<Parameters<typeof getAbsoluteEventTypeRedirectUrl>[0], "isEmbed">
+) {
+  return getAbsoluteEventTypeRedirectUrl({ ...args });
 }

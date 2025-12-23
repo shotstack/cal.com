@@ -2,7 +2,7 @@ import { useRouter } from "next/navigation";
 import type { Dispatch, SetStateAction } from "react";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Icon } from "@calcom/ui";
+import { Icon } from "@calcom/ui/components/icon";
 
 const StepDone = (props: {
   currentStep: number;
@@ -16,7 +16,7 @@ const StepDone = (props: {
     <form
       id={`wizard-step-${props.currentStep}`}
       name={`wizard-step-${props.currentStep}`}
-      className="flex justify-center space-y-4"
+      className="flex justify-center stack-y-4"
       onSubmit={(e) => {
         props.setIsPending(true);
         e.preventDefault();

@@ -1,13 +1,14 @@
 import { LRUCache } from "lru-cache";
-import type { GetServerSidePropsContext, NextApiRequest, NextApiResponse } from "next";
+import type { GetServerSidePropsContext, NextApiRequest } from "next";
 import type { AuthOptions, Session } from "next-auth";
 import { getToken } from "next-auth/jwt";
 
 import { LicenseKeySingleton } from "@calcom/ee/common/server/LicenseKeyService";
+import { DeploymentRepository } from "@calcom/features/ee/deployment/repositories/DeploymentRepository";
+import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
-import { UserRepository } from "@calcom/lib/server/repository/user";
 import prisma from "@calcom/prisma";
 
 const log = logger.getSubLogger({ prefix: ["getServerSession"] });
@@ -30,7 +31,6 @@ const CACHE = new LRUCache<string, Session>({ max: 1000 });
  */
 export async function getServerSession(options: {
   req: NextApiRequest | GetServerSidePropsContext["req"];
-  res?: NextApiResponse | GetServerSidePropsContext["res"];
   authOptions?: AuthOptions;
 }) {
   const { req, authOptions: { secret } = {} } = options;
@@ -43,7 +43,7 @@ export async function getServerSession(options: {
   log.debug("Getting server session", safeStringify({ token }));
 
   if (!token || !token.email || !token.sub) {
-    log.debug("Couldnt get token");
+    log.debug("Couldn't get token");
     return null;
   }
 
@@ -54,10 +54,10 @@ export async function getServerSession(options: {
     return cachedSession;
   }
 
+  const email = token.email.toLowerCase();
+
   const userFromDb = await prisma.user.findUnique({
-    where: {
-      email: token.email.toLowerCase(),
-    },
+    where: { email },
   });
 
   if (!userFromDb) {
@@ -65,7 +65,8 @@ export async function getServerSession(options: {
     return null;
   }
 
-  const licenseKeyService = await LicenseKeySingleton.getInstance();
+  const deploymentRepo = new DeploymentRepository(prisma);
+  const licenseKeyService = await LicenseKeySingleton.getInstance(deploymentRepo);
   const hasValidLicense = await licenseKeyService.checkLicense();
 
   let upId = token.upId;
@@ -79,7 +80,8 @@ export async function getServerSession(options: {
     return null;
   }
 
-  const user = await UserRepository.enrichUserWithTheProfile({
+  const userRepository = new UserRepository(prisma);
+  const user = await userRepository.enrichUserWithTheProfile({
     user: userFromDb,
     upId,
   });
@@ -94,12 +96,14 @@ export async function getServerSession(options: {
       email: user.email,
       emailVerified: user.emailVerified,
       email_verified: user.emailVerified !== null,
+      completedOnboarding: user.completedOnboarding,
       role: user.role,
       image: getUserAvatarUrl({
         avatarUrl: user.avatarUrl,
       }),
       belongsToActiveTeam: token.belongsToActiveTeam,
       org: token.org,
+      orgAwareUsername: token.orgAwareUsername,
       locale: user.locale ?? undefined,
       profile: user.profile,
     },

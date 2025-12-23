@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 
 import { TOP_BANNER_HEIGHT } from "@calcom/lib/constants";
 
-import { Icon, type IconName } from "../..";
+import { Icon } from "../icon";
+import type { IconName } from "../icon";
 
 export type TopBannerProps = {
   icon?: IconName;
@@ -13,7 +14,7 @@ export type TopBannerProps = {
 };
 
 const variantClassName = {
-  default: "bg-gradient-primary",
+  default: "[background-image:radial-gradient(162.05%_170%_at_109.58%_35%,_#667593_0%,_#E3E3E3_100%)]",
   warning: "bg-orange-400",
   error: "bg-red-400",
 };

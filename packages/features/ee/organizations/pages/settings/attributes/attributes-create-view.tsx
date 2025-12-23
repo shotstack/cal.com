@@ -1,15 +1,15 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import React from "react";
 import { useFormContext } from "react-hook-form";
 import { z } from "zod";
 
 import LicenseRequired from "@calcom/features/ee/common/components/LicenseRequired";
-import SettingsLayout from "@calcom/features/settings/layouts/SettingsLayout";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import { Meta, Button, useMeta, showToast } from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { showToast } from "@calcom/ui/components/toast";
+import { revalidateAttributesList } from "@calcom/web/app/(use-page-wrapper)/settings/organizations/(org-user-only)/members/actions";
 
 import { AttributeForm } from "./AttributesForm";
 
@@ -27,27 +27,24 @@ function CreateAttributesPage() {
   const mutation = trpc.viewer.attributes.create.useMutation({
     onSuccess: () => {
       showToast("Attribute created successfully", "success");
+      revalidateAttributesList();
       router.push("/settings/organizations/attributes");
     },
     onError: (err) => {
       showToast(err.message, "error");
     },
   });
-  const { t } = useLocale();
 
   return (
     <>
       <LicenseRequired>
-        <Meta title="Attribute" description="Create an attribute for your team members" />
         <AttributeForm
           header={<CreateAttributeHeader isPending={mutation.isPending} />}
           onSubmit={(values) => {
-            // Create set of attributes to get unique values
-            const uniqueAttributes = new Set(values.options.map((option) => option.value));
+            const { attrName, ...rest } = values;
             mutation.mutate({
-              name: values.attrName,
-              type: values.type,
-              options: Array.from(uniqueAttributes).map((value) => ({ value })),
+              ...rest,
+              name: attrName,
             });
           }}
         />
@@ -57,7 +54,6 @@ function CreateAttributesPage() {
 }
 
 function CreateAttributeHeader(props: { isPending: boolean }) {
-  const { meta } = useMeta();
   const { t } = useLocale();
   const formContext = useFormContext<FormValues>();
 
@@ -65,7 +61,7 @@ function CreateAttributeHeader(props: { isPending: boolean }) {
 
   return (
     <>
-      <div className="mb-6 mt-6 flex flex-grow items-center justify-between lg:mt-12">
+      <div className="mb-6 mt-6 flex grow items-center justify-between lg:mt-12">
         <div className="-ml-12 flex items-center gap-4">
           <Button
             variant="icon"
@@ -75,7 +71,7 @@ function CreateAttributeHeader(props: { isPending: boolean }) {
             <span className="sr-only">{t("back_to_attributes")}</span>
           </Button>
           <div className="font-cal text-cal flex space-x-1 text-xl font-semibold leading-none">
-            <h1 className="text-emphasis">{meta.title}</h1>
+            <h1 className="text-emphasis">{t("attribute")}</h1>
             {watchedTitle && (
               <>
                 <span className="text-subtle">/</span> <span className="text-emphasis">{watchedTitle}</span>
@@ -90,10 +86,5 @@ function CreateAttributeHeader(props: { isPending: boolean }) {
     </>
   );
 }
-function getLayout(page: React.ReactElement) {
-  return <SettingsLayout hideHeader>{page}</SettingsLayout>;
-}
-
-CreateAttributesPage.getLayout = getLayout;
 
 export default CreateAttributesPage;

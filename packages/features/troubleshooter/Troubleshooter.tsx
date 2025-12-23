@@ -1,7 +1,6 @@
-import StickyBox from "react-sticky-box";
-
-import classNames from "@calcom/lib/classNames";
+import { BookerStoreProvider } from "@calcom/features/bookings/Booker/BookerStoreProvider";
 import useMediaQuery from "@calcom/lib/hooks/useMediaQuery";
+import classNames from "@calcom/ui/classNames";
 
 import { LargeCalendar } from "./components/LargeCalendar";
 import { TroubleshooterHeader } from "./components/TroubleshooterHeader";
@@ -46,16 +45,14 @@ const TroubleshooterComponent = ({ month }: TroubleshooterProps) => {
             gridTemplateRows: "70px auto",
           }}
           className={classNames(
-            "bg-default dark:bg-muted text-default flex min-h-full w-full flex-col items-center sm:transition-[width] sm:duration-300"
+            "bg-default dark:bg-cal-muted text-default flex min-h-full w-full flex-col items-center sm:transition-[width] sm:duration-300"
           )}>
-          <div className="bg-default dark:bg-muted sticky top-0 z-10 [grid-area:header]">
+          <div className="bg-default dark:bg-cal-muted sticky top-0 z-10 [grid-area:header]">
             <TroubleshooterHeader extraDays={extraDays} isMobile={isMobile} />
           </div>
-          <StickyBox key="meta" className={classNames("relative z-10")}>
-            <div className="ps-6">
-              <TroubleshooterSidebar />
-            </div>
-          </StickyBox>
+          <div className="sticky top-0 z-10 ps-6">
+            <TroubleshooterSidebar />
+          </div>
 
           <div className="ml[-1px] border-subtle  sticky top-0 [grid-area:main]">
             <LargeCalendar extraDays={extraDays} />
@@ -67,5 +64,9 @@ const TroubleshooterComponent = ({ month }: TroubleshooterProps) => {
 };
 
 export const Troubleshooter = ({ month }: TroubleshooterProps) => {
-  return <TroubleshooterComponent month={month} />;
+  return (
+    <BookerStoreProvider>
+      <TroubleshooterComponent month={month} />
+    </BookerStoreProvider>
+  );
 };

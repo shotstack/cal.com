@@ -11,6 +11,8 @@ const CUSTOM_REQUIRED_FIELD_ERROR_MSG = "error_required_field";
 const CUSTOM_PHONE_VALIDATION_ERROR_MSG = "invalid_number";
 const CUSTOM_EMAIL_VALIDATION_ERROR_MSG = "email_validation_error";
 const CUSTOM_URL_VALIDATION_ERROR_MSG = "url_validation_error";
+const CUSTOM_EMAIL_EXCLUDED_ERROR_MSG = "exclude_emails_match_found_error_message";
+const CUSTOM_EMAIL_REQUIRED_ERROR_MSG = "require_emails_no_match_found_error_message";
 const ZOD_REQUIRED_FIELD_ERROR_MSG = "Required";
 
 describe("getBookingResponsesSchema", () => {
@@ -116,8 +118,8 @@ describe("getBookingResponsesSchema", () => {
         //@ts-ignore
         expect(parsedResponsesWithJustName.error.issues[0]).toEqual(
           expect.objectContaining({
-            message: ZOD_REQUIRED_FIELD_ERROR_MSG,
             path: ["email"],
+            message: ZOD_REQUIRED_FIELD_ERROR_MSG,
           })
         );
 
@@ -172,6 +174,66 @@ describe("getBookingResponsesSchema", () => {
             code: "custom",
           })
         );
+      });
+
+      test(`hidden required email field should not be validated`, async () => {
+        const schema = getBookingResponsesSchema({
+          bookingFields: [
+            {
+              name: "name",
+              type: "name",
+              required: true,
+            },
+            {
+              name: "email",
+              type: "email",
+              required: true,
+              hidden: true,
+            },
+            {
+              name: "attendeePhoneNumber",
+              type: "phone",
+              required: true,
+            },
+          ] as z.infer<typeof eventTypeBookingFields> & z.BRAND<"HAS_SYSTEM_FIELDS">,
+          view: "ALL_VIEWS",
+        });
+        const parsedResponses = await schema.safeParseAsync({
+          name: "John",
+          email: "",
+          attendeePhoneNumber: "+919999999999",
+        });
+        expect(parsedResponses.success).toBe(true);
+      });
+
+      test(`hidden required phone field should not be validated`, async () => {
+        const schema = getBookingResponsesSchema({
+          bookingFields: [
+            {
+              name: "name",
+              type: "name",
+              required: true,
+            },
+            {
+              name: "email",
+              type: "email",
+              required: true,
+            },
+            {
+              name: "attendeePhoneNumber",
+              type: "phone",
+              required: true,
+              hidden: true,
+            },
+          ] as z.infer<typeof eventTypeBookingFields> & z.BRAND<"HAS_SYSTEM_FIELDS">,
+          view: "ALL_VIEWS",
+        });
+        const parsedResponses = await schema.safeParseAsync({
+          name: "John",
+          email: "john@example.com",
+          attendeePhoneNumber: "",
+        });
+        expect(parsedResponses.success).toBe(true);
       });
 
       test(`firstName is required and lastName is optional by default`, async () => {
@@ -715,7 +777,7 @@ describe("getBookingResponsesSchema", () => {
   });
 
   describe("multiemail field type", () => {
-    test("should succesfully parse a multiemail type field", async () => {
+    test("should successfully parse a multiemail type field", async () => {
       const schema = getBookingResponsesSchema({
         bookingFields: [
           {
@@ -792,7 +854,7 @@ describe("getBookingResponsesSchema", () => {
       );
     });
 
-    test("should succesfully parse a multiemail type field response, even when the value is just a string[Prefill needs it]", async () => {
+    test("should successfully parse a multiemail type field response, even when the value is just a string[Prefill needs it]", async () => {
       const schema = getBookingResponsesSchema({
         bookingFields: [
           {
@@ -831,7 +893,7 @@ describe("getBookingResponsesSchema", () => {
   });
 
   describe("multiselect field type", () => {
-    test("should succesfully parse a multiselect type field", async () => {
+    test("should successfully parse a multiselect type field", async () => {
       const schema = getBookingResponsesSchema({
         bookingFields: [
           {
@@ -868,7 +930,7 @@ describe("getBookingResponsesSchema", () => {
         testMultiselect: ["option1", "option-2"],
       });
     });
-    test("should succesfully parse a multiselect type field", async () => {
+    test("should successfully parse a multiselect type field", async () => {
       const schema = getBookingResponsesSchema({
         bookingFields: [
           {
@@ -948,7 +1010,7 @@ describe("getBookingResponsesSchema", () => {
   });
 
   describe("multiselect field type", () => {
-    test("should succesfully parse a multiselect type field", async () => {
+    test("should successfully parse a multiselect type field", async () => {
       const schema = getBookingResponsesSchema({
         bookingFields: [
           {
@@ -1093,7 +1155,7 @@ describe("validate radioInput type field", () => {
 });
 
 describe("validate url type field", () => {
-  test(`should fail parsing if invalid url provided`, async ({}) => {
+  test(`should pass parsing if protocol is missing`, async ({}) => {
     const schema = getBookingResponsesSchema({
       bookingFields: [
         {
@@ -1119,6 +1181,44 @@ describe("validate url type field", () => {
       name: "test",
       url: "www.example.com",
     });
+    // Expect success because our logic now handles missing protocol
+    expect(parsedResponses.success).toBe(true);
+    if (!parsedResponses.success) {
+      throw new Error("Should not reach here");
+    }
+    expect(parsedResponses.data).toEqual({
+      email: "test@test.com",
+      name: "test",
+      url: "www.example.com",
+    });
+  });
+
+  test(`should fail parsing if url is truly invalid`, async ({}) => {
+    const schema = getBookingResponsesSchema({
+      bookingFields: [
+        {
+          name: "name",
+          type: "name",
+          required: true,
+        },
+        {
+          name: "email",
+          type: "email",
+          required: true,
+        },
+        {
+          name: "url",
+          type: "url",
+          required: true,
+        },
+      ] as z.infer<typeof eventTypeBookingFields> & z.BRAND<"HAS_SYSTEM_FIELDS">,
+      view: "ALL_VIEWS",
+    });
+    const parsedResponses = await schema.safeParseAsync({
+      email: "test@test.com",
+      name: "test",
+      url: "http:/nope",
+    });
     expect(parsedResponses.success).toBe(false);
     if (parsedResponses.success) {
       throw new Error("Should not reach here");
@@ -1130,6 +1230,7 @@ describe("validate url type field", () => {
       })
     );
   });
+
   test(`should successfully give responses if url type field value is valid`, async ({}) => {
     const schema = getBookingResponsesSchema({
       bookingFields: [
@@ -1239,5 +1340,158 @@ describe("getBookingResponsesPartialSchema - Prefill validation", () => {
         testField: "test",
       })
     );
+  });
+});
+
+describe("excluded email/domain validation", () => {
+  test("should fail if the email is present in excluded emails", async () => {
+    const excludedEmails = "spammer@cal.com, hotmail.com, yahoo, @gmail.com";
+
+    const schema = getBookingResponsesSchema({
+      bookingFields: [
+        {
+          name: "name",
+          type: "name",
+          required: true,
+        },
+        {
+          name: "email",
+          type: "email",
+          required: true,
+          excludeEmails: excludedEmails,
+        },
+      ] as z.infer<typeof eventTypeBookingFields> & z.BRAND<"HAS_SYSTEM_FIELDS">,
+      view: "ALL_VIEWS",
+    });
+
+    const parsedResponses = await schema.safeParseAsync({
+      name: "test",
+      email: "harry@gmail.com",
+    });
+    expect(parsedResponses.success).toBe(false);
+
+    if (parsedResponses.success) {
+      throw new Error("Should not reach here");
+    }
+    expect(parsedResponses.error.issues[0]).toEqual(
+      expect.objectContaining({
+        code: "custom",
+        message: `{email}${CUSTOM_EMAIL_EXCLUDED_ERROR_MSG}`,
+      })
+    );
+  });
+
+  test("should pass if the email is not present in excluded emails", async () => {
+    const excludedEmails = "spammer@cal.com, hotmail.com, yahoo, @gmail.com";
+
+    const schema = getBookingResponsesSchema({
+      bookingFields: [
+        {
+          name: "name",
+          type: "name",
+          required: true,
+        },
+        {
+          name: "email",
+          type: "email",
+          required: true,
+          excludeEmails: excludedEmails,
+        },
+      ] as z.infer<typeof eventTypeBookingFields> & z.BRAND<"HAS_SYSTEM_FIELDS">,
+      view: "ALL_VIEWS",
+    });
+
+    const parsedResponses = await schema.safeParseAsync({
+      name: "test",
+      email: "harry@workmail.com",
+    });
+
+    expect(parsedResponses.success).toBe(true);
+
+    if (!parsedResponses.success) {
+      throw new Error("Should not reach here");
+    }
+
+    expect(parsedResponses.data).toEqual({
+      name: "test",
+      email: "harry@workmail.com",
+    });
+  });
+});
+
+describe("require email/domain validation", () => {
+  test("should fail if the required email/domain is not present", async () => {
+    const requiredEmails = "gmail.com, user@hotmail.com, @yahoo.com";
+    const schema = getBookingResponsesSchema({
+      bookingFields: [
+        {
+          name: "name",
+          type: "name",
+          required: true,
+        },
+        {
+          name: "email",
+          type: "email",
+          required: true,
+          requireEmails: requiredEmails,
+        },
+      ] as z.infer<typeof eventTypeBookingFields> & z.BRAND<"HAS_SYSTEM_FIELDS">,
+      view: "ALL_VIEWS",
+    });
+
+    const parsedResponses = await schema.safeParseAsync({
+      name: "test",
+      email: "test@test.com",
+    });
+
+    expect(parsedResponses.success).toBe(false);
+
+    if (parsedResponses.success) {
+      throw new Error("Should not reach here");
+    }
+
+    expect(parsedResponses.error.issues[0]).toEqual(
+      expect.objectContaining({
+        code: "custom",
+        message: `{email}${CUSTOM_EMAIL_REQUIRED_ERROR_MSG}`,
+      })
+    );
+  });
+
+  test("should pass if the required email/domain is present", async () => {
+    const requiredEmails = "gmail.com, user@hotmail.com, @yahoo.com";
+
+    const schema = getBookingResponsesSchema({
+      bookingFields: [
+        {
+          name: "name",
+          type: "name",
+          required: true,
+        },
+        {
+          name: "email",
+          type: "email",
+          required: true,
+          requireEmails: requiredEmails,
+        },
+      ] as z.infer<typeof eventTypeBookingFields> & z.BRAND<"HAS_SYSTEM_FIELDS">,
+      view: "ALL_VIEWS",
+    });
+
+    const parsedResponses = await schema.safeParseAsync({
+      name: "test",
+      email: "test@gmail.com",
+    });
+
+    expect(parsedResponses.success).toBe(true);
+
+    if (!parsedResponses.success) {
+      throw new Error("Should not reach here");
+    }
+
+    expect(parsedResponses.data).toEqual({
+      name: "test",
+      email: "test@gmail.com",
+    });
   });
 });

@@ -1,65 +1,102 @@
 "use client";
 
+import { cva } from "class-variance-authority";
 import React, { forwardRef, useId, useState } from "react";
 
-import classNames from "@calcom/lib/classNames";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import classNames from "@calcom/ui/classNames";
 
-import { Icon, Skeleton } from "../../..";
+import { Icon } from "../../icon";
 import { HintsOrErrors } from "./HintOrErrors";
 import { Label } from "./Label";
 import type { InputFieldProps, InputProps } from "./types";
 
+export const inputStyles = cva(
+  [
+    // Base styles
+    "rounded-[10px] border",
+    "leading-none font-normal",
+
+    // Colors
+    "bg-default",
+    "border-default",
+    "text-default",
+    "placeholder:text-muted",
+
+    // States
+    "hover:border-emphasis",
+    "focus:border-emphasis",
+    "focus:ring-0",
+    "focus:shadow-outline-gray-focused",
+
+    // Disabled state
+    "disabled:bg-subtle",
+    "disabled:hover:border-default",
+    "disabled:cursor-not-allowed",
+
+    // Shadow
+    "shadow-outline-gray-rested",
+
+    // Transitions
+    "transition-all",
+  ],
+  {
+    variants: {
+      size: {
+        sm: "h-7 px-2 py-1 text-xs",
+        md: "h-8 px-3 py-2 text-sm",
+      },
+    },
+    defaultVariants: {
+      size: "md",
+    },
+  }
+);
+
 export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { isFullWidth = true, ...props },
+  { isFullWidth = true, size = "md", className, ...props },
   ref
 ) {
   return (
     <input
       {...props}
       ref={ref}
-      className={classNames(
-        "hover:border-emphasis dark:focus:border-emphasis border-default bg-default placeholder:text-muted text-emphasis disabled:hover:border-default disabled:bg-subtle focus:ring-brand-default focus:border-subtle mb-2 block h-9 rounded-md border px-3 py-2 text-sm leading-4 transition focus:outline-none focus:ring-2 disabled:cursor-not-allowed",
-        isFullWidth && "w-full",
-        props.className
-      )}
+      className={classNames(inputStyles({ size }), isFullWidth && "w-full", className)}
     />
   );
 });
 
 type AddonProps = {
   children: React.ReactNode;
-  isFilled?: boolean;
   className?: string;
   error?: boolean;
-  onClickAddon?: () => void;
+  onClickAddon?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  size?: "sm" | "md";
+  position?: "start" | "end";
 };
 
-const Addon = ({ isFilled, children, className, error, onClickAddon }: AddonProps) => (
+const Addon = ({
+  children,
+  className,
+  error,
+  onClickAddon,
+  size: _size = "md",
+  position: _position = "start",
+}: AddonProps) => (
   <div
     onClick={onClickAddon && onClickAddon}
     className={classNames(
-      "addon-wrapper border-default [input:hover_+_&]:border-emphasis [input:hover_+_&]:border-l-default [&:has(+_input:hover)]:border-emphasis [&:has(+_input:hover)]:border-r-default h-9 border px-3 transition",
-      isFilled && "bg-subtle",
-      onClickAddon && "cursor-pointer disabled:hover:cursor-not-allowed",
+      "flex shrink-0 items-center justify-center whitespace-nowrap",
+      onClickAddon && "pointer-events-auto cursor-pointer disabled:hover:cursor-not-allowed",
       className
     )}>
-    <div
+    <span
       className={classNames(
-        "min-h-9 flex flex-col justify-center text-sm leading-7",
-        error ? "text-error" : "text-default"
+        "text-sm font-medium leading-none",
+        error ? "text-error" : "text-muted peer-disabled:opacity-50"
       )}>
-      <span
-        className="flex max-w-2xl overflow-y-auto whitespace-nowrap"
-        style={{
-          WebkitOverflowScrolling: "touch",
-          scrollbarWidth: "none",
-          overflow: "-ms-scroll-chaining",
-          msOverflowStyle: "-ms-autohiding-scrollbar",
-        }}>
-        {children}
-      </span>
-    </div>
+      {children}
+    </span>
   </div>
 );
 
@@ -78,7 +115,6 @@ export const InputField = forwardRef<HTMLInputElement, InputFieldProps>(function
     className,
     addOnLeading,
     addOnSuffix,
-    addOnFilled = true,
     addOnClassname,
     inputIsFullWidth,
     hint,
@@ -90,21 +126,24 @@ export const InputField = forwardRef<HTMLInputElement, InputFieldProps>(function
     readOnly,
     showAsteriskIndicator,
     onClickAddon,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
     t: __t,
     dataTestid,
+    size,
     ...passThrough
   } = props;
 
   const [inputValue, setInputValue] = useState<string>("");
 
+  const handleFocusInput = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.currentTarget.parentElement?.querySelector("input")?.focus();
+  };
+
   return (
     <div className={classNames(containerClassName)}>
       {!!name && !noLabel && (
-        <Skeleton
-          as={Label}
+        <Label
           htmlFor={id}
-          loadingClassName="w-16"
           {...labelProps}
           className={classNames(labelClassName, labelSrOnly && "sr-only", props.error && "text-error")}>
           {label}
@@ -112,38 +151,45 @@ export const InputField = forwardRef<HTMLInputElement, InputFieldProps>(function
             <span className="text-default ml-1 font-medium">*</span>
           ) : null}
           {LockedIcon}
-        </Skeleton>
+        </Label>
       )}
       {addOnLeading || addOnSuffix ? (
         <div
           dir="ltr"
-          className="focus-within:ring-brand-default group relative mb-1 flex items-center rounded-md transition focus-within:outline-none focus-within:ring-2">
+          className={classNames(
+            inputStyles({ size }),
+            "group relative mb-1 flex min-w-0 items-center gap-1",
+            "focus-within:shadow-outline-gray-focused focus-within:border-emphasis",
+            "[&:has(:disabled)]:bg-subtle [&:has(:disabled)]:hover:border-default [&:has(:disabled)]:cursor-not-allowed",
+            inputIsFullWidth && "w-full"
+          )}>
           {addOnLeading && (
             <Addon
-              isFilled={addOnFilled}
-              className={classNames("ltr:rounded-l-md rtl:rounded-r-md", addOnClassname)}>
+              size={size ?? "md"}
+              position="start"
+              className={classNames(addOnClassname)}
+              onClickAddon={handleFocusInput}>
               {addOnLeading}
             </Addon>
           )}
-          <Input
-            data-testid={`${dataTestid}-input` ?? "input-field"}
+          <input
+            data-testid={dataTestid ? `${dataTestid}-input` : "input-field"}
             id={id}
             type={type}
             placeholder={placeholder}
-            isFullWidth={inputIsFullWidth}
             className={classNames(
-              className,
-              "disabled:bg-subtle disabled:hover:border-subtle disabled:cursor-not-allowed",
-              addOnLeading && "rounded-l-none border-l-0",
-              addOnSuffix && "rounded-r-none border-r-0",
-              type === "search" && "pr-8",
-              "!my-0 !ring-0"
+              "w-full min-w-0 truncate border-0 bg-transparent focus:outline-none focus:ring-0",
+              "text-default rounded-lg text-sm font-medium leading-none",
+              "placeholder:text-muted disabled:cursor-not-allowed disabled:bg-transparent",
+              addOnLeading && "rounded-none pl-0.5 pr-0",
+              addOnSuffix && "pl-0",
+              className
             )}
             {...passThrough}
             {...(type == "search" && {
               onChange: (e) => {
                 setInputValue(e.target.value);
-                props.onChange && props.onChange(e);
+                props.onChange?.(e);
               },
               value: inputValue,
             })}
@@ -152,9 +198,13 @@ export const InputField = forwardRef<HTMLInputElement, InputFieldProps>(function
           />
           {addOnSuffix && (
             <Addon
-              onClickAddon={onClickAddon}
-              isFilled={addOnFilled}
-              className={classNames("ltr:rounded-r-md rtl:rounded-l-md", addOnClassname)}>
+              size={size ?? "md"}
+              position="end"
+              onClickAddon={(e) => {
+                handleFocusInput(e);
+                onClickAddon?.(e);
+              }}
+              className={classNames(addOnClassname)}>
               {addOnSuffix}
             </Addon>
           )}
@@ -164,7 +214,7 @@ export const InputField = forwardRef<HTMLInputElement, InputFieldProps>(function
               className="text-subtle absolute top-2.5 h-4 w-4 cursor-pointer ltr:right-2 rtl:left-2"
               onClick={(e) => {
                 setInputValue("");
-                props.onChange && props.onChange(e as unknown as React.ChangeEvent<HTMLInputElement>);
+                props.onChange?.(e as unknown as React.ChangeEvent<HTMLInputElement>);
               }}
             />
           )}
@@ -174,6 +224,7 @@ export const InputField = forwardRef<HTMLInputElement, InputFieldProps>(function
           id={id}
           type={type}
           placeholder={placeholder}
+          size={size}
           className={classNames(
             className,
             "disabled:bg-subtle disabled:hover:border-subtle disabled:cursor-not-allowed"

@@ -1,32 +1,33 @@
 import { useSession } from "next-auth/react";
-import { Trans } from "next-i18next";
 import type { FormEvent } from "react";
 import { useMemo, useRef, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
+import posthog from "posthog-js";
 
 import TeamInviteFromOrg from "@calcom/ee/organizations/components/TeamInviteFromOrg";
-import { classNames } from "@calcom/lib";
-import { IS_TEAM_BILLING_ENABLED, MAX_NB_INVITES } from "@calcom/lib/constants";
+import { checkAdminOrOwner } from "@calcom/features/auth/lib/checkAdminOrOwner";
+import { Dialog } from "@calcom/features/components/controlled-dialog";
+import ServerTrans from "@calcom/lib/components/ServerTrans";
+import { IS_TEAM_BILLING_ENABLED_CLIENT, MAX_NB_INVITES } from "@calcom/lib/constants";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { MembershipRole } from "@calcom/prisma/enums";
-import type { RouterOutputs } from "@calcom/trpc";
-import { trpc } from "@calcom/trpc";
+import { CreationSource } from "@calcom/prisma/enums";
+import type { RouterOutputs } from "@calcom/trpc/react";
+import { trpc } from "@calcom/trpc/react";
 import { isEmail } from "@calcom/trpc/server/routers/viewer/teams/util";
-import {
-  Button,
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  Form,
-  Icon,
-  Label,
-  Select,
-  showToast,
-  TextAreaField,
-  TextField,
-  ToggleGroup,
-} from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+import { Button } from "@calcom/ui/components/button";
+import { DialogContent, DialogFooter } from "@calcom/ui/components/dialog";
+import { TextAreaField } from "@calcom/ui/components/form";
+import { Form } from "@calcom/ui/components/form";
+import { Label } from "@calcom/ui/components/form";
+import { TextField } from "@calcom/ui/components/form";
+import { Select } from "@calcom/ui/components/form";
+import { ToggleGroup } from "@calcom/ui/components/form";
+import { Icon } from "@calcom/ui/components/icon";
+import { showToast } from "@calcom/ui/components/toast";
+import { revalidateTeamsList } from "@calcom/web/app/(use-page-wrapper)/(main-nav)/teams/actions";
 
 import type { PendingMember } from "../lib/types";
 import { GoogleWorkspaceInviteButton } from "./GoogleWorkspaceInviteButton";
@@ -79,9 +80,7 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
   const checkIfMembershipExistsMutation = trpc.viewer.teams.checkIfMembershipExists.useMutation();
 
   // Check current org role and not team role
-  const isOrgAdminOrOwner =
-    currentOrg &&
-    (currentOrg.user.role === MembershipRole.OWNER || currentOrg.user.role === MembershipRole.ADMIN);
+  const isOrgAdminOrOwner = currentOrg && checkAdminOrOwner(currentOrg.user.role);
 
   const canSeeOrganization = currentOrg?.isPrivate
     ? isOrgAdminOrOwner
@@ -92,9 +91,10 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
   );
 
   const createInviteMutation = trpc.viewer.teams.createInvite.useMutation({
-    async onSuccess({ inviteLink }) {
+    async onSuccess() {
       trpcContext.viewer.teams.get.invalidate();
       trpcContext.viewer.teams.list.invalidate();
+      revalidateTeamsList();
     },
     onError: (error) => {
       showToast(error.message, "error");
@@ -206,21 +206,27 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
         type="creation"
         title={t("invite_team_member")}
         description={
-          IS_TEAM_BILLING_ENABLED ? (
+          IS_TEAM_BILLING_ENABLED_CLIENT && !currentOrg ? (
             <span className="text-subtle text-sm leading-tight">
-              <Trans i18nKey="invite_new_member_description">
-                Note: This will <span className="text-emphasis font-medium">cost an extra seat ($15/m)</span>{" "}
-                on your subscription.
-              </Trans>
+              <ServerTrans
+                t={t}
+                i18nKey="invite_new_member_description"
+                components={[
+                  <span key="invite_new_member_description" className="text-emphasis font-medium">
+                    cost an extra seat ($15/m)
+                  </span>,
+                ]}
+              />
             </span>
           ) : null
         }>
-        <div className="max-h-9">
+        <div className="sm:max-h-9">
           <Label className="sr-only" htmlFor="role">
             {t("import_mode")}
           </Label>
           <ToggleGroup
             isFullWidth={true}
+            className="flex-col sm:flex-row"
             onValueChange={(val) => {
               setModalInputMode(val as ModalMode);
               newMemberFormMethods.clearErrors();
@@ -230,9 +236,9 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
           />
         </div>
 
-        <Form form={newMemberFormMethods} handleSubmit={(values) => props.onSubmit(values, resetFields)}>
+        <Form form={newMemberFormMethods} handleSubmit={(values) => { props.onSubmit(values, resetFields); posthog.capture("teams_modal_invite_members_button_clicked") }}>
           <div className="mb-10 mt-6 space-y-6">
-            {/* Indivdual Invite */}
+            {/* Individual Invite */}
             {modalImportMode === "INDIVIDUAL" && (
               <Controller
                 name="emailOrUsername"
@@ -265,7 +271,7 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
             )}
             {/* Bulk Invite */}
             {modalImportMode === "BULK" && (
-              <div className="bg-muted flex flex-col rounded-md p-4">
+              <div className="bg-cal-muted flex flex-col rounded-md p-4">
                 <Controller
                   name="emailOrUsername"
                   control={newMemberFormMethods.control}
@@ -383,7 +389,9 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
                   color="minimal"
                   className="me-2 ms-2"
                   onClick={() => {
-                    props.onSettingsOpen && props.onSettingsOpen();
+                    if (props.onSettingsOpen) {
+                      props.onSettingsOpen();
+                    }
                     newMemberFormMethods.reset();
                   }}
                   data-testid="edit-invite-link-button">
@@ -394,7 +402,7 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
           </div>
           <DialogFooter showDivider>
             {!disableCopyLink && (
-              <div className="flex-grow">
+              <div className="grow">
                 <Button
                   type="button"
                   color="minimal"
@@ -405,6 +413,7 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
                       // Credits to https://wolfgangrittner.dev/how-to-use-clipboard-api-in-firefox/
                       if (typeof ClipboardItem !== "undefined") {
                         const inviteLinkClipbardItem = new ClipboardItem({
+                          //eslint-disable-next-line no-async-promise-executor
                           "text/plain": new Promise(async (resolve) => {
                             // Instead of doing async work and then writing to clipboard, do async work in clipboard API itself
                             const { inviteLink } = await createInviteMutation.mutateAsync({
@@ -431,8 +440,8 @@ export default function MemberInvitationModal(props: MemberInvitationModalProps)
                     }
                   }}
                   className={classNames("gap-2", props.token && "opacity-50")}
+                  StartIcon="link"
                   data-testid="copy-invite-link-button">
-                  <Icon name="link" className="text-default h-4 w-4" aria-hidden="true" />
                   <span className="hidden sm:inline">{t("copy_invite_link")}</span>
                 </Button>
               </div>
@@ -469,7 +478,8 @@ export const MemberInvitationModalWithoutMembers = ({
   teamId,
   token,
   onSettingsOpen,
-}: {
+  ...props
+}: Partial<MemberInvitationModalProps> & {
   hideInvitationModal: () => void;
   showMemberInvitationModal: boolean;
   teamId: number;
@@ -495,6 +505,7 @@ export const MemberInvitationModalWithoutMembers = ({
 
   return (
     <MemberInvitationModal
+      {...props}
       isPending={inviteMemberMutation.isPending || isOrgListLoading}
       isOpen={showMemberInvitationModal}
       orgMembers={orgMembersNotInThisTeam}
@@ -509,11 +520,12 @@ export const MemberInvitationModalWithoutMembers = ({
             language: i18n.language,
             role: values.role,
             usernameOrEmail: values.emailOrUsername,
+            creationSource: CreationSource.WEBAPP,
           },
           {
             onSuccess: async (data) => {
               await utils.viewer.teams.get.invalidate();
-              await utils.viewer.teams.lazyLoadMembers.invalidate();
+              await utils.viewer.teams.listMembers.invalidate();
               await utils.viewer.organizations.getMembers.invalidate();
               hideInvitationModal();
 

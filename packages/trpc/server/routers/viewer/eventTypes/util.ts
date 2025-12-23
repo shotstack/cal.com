@@ -1,32 +1,41 @@
 import { z } from "zod";
 
+import type { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
+import type { PermissionString } from "@calcom/features/pbac/domain/types/permission-registry";
+import { PermissionCheckService } from "@calcom/features/pbac/services/permission-check.service";
+import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { markdownToSafeHTML } from "@calcom/lib/markdownToSafeHTML";
-import { BookingRepository } from "@calcom/lib/server/repository/booking";
-import type { EventTypeRepository } from "@calcom/lib/server/repository/eventType";
-import { UserRepository } from "@calcom/lib/server/repository/user";
-import type { PrismaClient } from "@calcom/prisma";
-import { MembershipRole, PeriodType } from "@calcom/prisma/enums";
+import prisma from "@calcom/prisma";
+import type { MembershipRole } from "@calcom/prisma/enums";
+import { PeriodType } from "@calcom/prisma/enums";
 import type { CustomInputSchema } from "@calcom/prisma/zod-utils";
 import { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 
 import { TRPCError } from "@trpc/server";
 
 import authedProcedure from "../../../procedures/authedProcedure";
-import type { EventTypeUpdateInput } from "./types";
+import type { TUpdateInputSchema } from "./types";
 
-type EventType = Awaited<ReturnType<typeof EventTypeRepository.findAllByUpId>>[number];
+type EventType = Awaited<ReturnType<EventTypeRepository["findAllByUpId"]>>[number];
 
 export const eventOwnerProcedure = authedProcedure
   .input(
-    z.object({
-      id: z.number(),
-      users: z.array(z.number()).optional().default([]),
-    })
+    z
+      .object({
+        id: z.number().optional(),
+        eventTypeId: z.number().optional(),
+        users: z.array(z.number()).optional().default([]),
+      })
+      .refine((data) => data.id !== undefined || data.eventTypeId !== undefined, {
+        message: "At least one of 'id' or 'eventTypeId' must be present",
+        path: ["id", "eventTypeId"],
+      })
   )
   .use(async ({ ctx, input, next }) => {
+    const id = input.eventTypeId ?? input.id;
     // Prevent non-owners to update/delete a team event
     const event = await ctx.prisma.eventType.findUnique({
-      where: { id: input.id },
+      where: { id },
       include: {
         users: {
           select: {
@@ -52,13 +61,10 @@ export const eventOwnerProcedure = authedProcedure
 
     const isAuthorized = (function () {
       if (event.team) {
-        const isOrgAdmin = !!ctx.user?.organization?.isOrgAdmin;
-        return (
-          event.team.members
-            .filter((member) => member.role === MembershipRole.OWNER || member.role === MembershipRole.ADMIN)
-            .map((member) => member.userId)
-            .includes(ctx.user.id) || isOrgAdmin
-        );
+        const teamMember = event.team.members.find((member) => member.userId === ctx.user.id);
+        const isOwnerOrAdmin = teamMember?.role === "ADMIN" || teamMember?.role === "OWNER";
+
+        return isOwnerOrAdmin;
       }
       return event.userId === ctx.user.id || event.users.find((user) => user.id === ctx.user.id);
     })();
@@ -84,6 +90,111 @@ export const eventOwnerProcedure = authedProcedure
 
     return next();
   });
+
+/**
+ * Creates an event admin procedure with configurable permissions
+ * @param permission - The specific permission required (e.g., "eventType.manage", "eventType.update")
+ * @param fallbackRoles - Roles to check when PBAC is disabled (defaults to ["ADMIN", "OWNER"])
+ * @returns A procedure that checks the specified permission
+ */
+export const createEventPbacProcedure = (
+  permission: PermissionString,
+  fallbackRoles: MembershipRole[] = ["ADMIN", "OWNER"]
+) => {
+  return authedProcedure
+    .input(
+      z
+        .object({
+          id: z.number().optional(),
+          eventTypeId: z.number().optional(),
+          users: z.array(z.number()).optional(),
+        })
+        .refine((data) => data.id !== undefined || data.eventTypeId !== undefined, {
+          message: "At least one of 'id' or 'eventTypeId' must be present",
+          path: ["id", "eventTypeId"],
+        })
+    )
+    .use(async ({ ctx, input, next }) => {
+      const id = input.eventTypeId ?? input.id;
+
+      const event = await ctx.prisma.eventType.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          userId: true,
+          teamId: true,
+          users: {
+            select: {
+              id: true,
+            },
+          },
+          team: {
+            select: {
+              members: {
+                select: {
+                  userId: true,
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!event) {
+        throw new TRPCError({ code: "NOT_FOUND" });
+      }
+
+      // Check if user has permission to access/modify this event
+      if (!event.teamId) {
+        // Personal event - must be owner or assigned user
+        if (event.userId !== ctx.user.id && !event.users.find((user) => user.id === ctx.user.id)) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: `Permission required: ${permission}`,
+          });
+        }
+      } else {
+        // Team event - check PBAC/fallback permissions
+        const permissionCheckService = new PermissionCheckService();
+        const hasPermission = await permissionCheckService.checkPermission({
+          userId: ctx.user.id,
+          teamId: event.teamId,
+          permission,
+          fallbackRoles,
+        });
+
+        if (!hasPermission) {
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: `Permission required: ${permission}`,
+          });
+        }
+      }
+
+      // Validate that assigned users are allowed
+      if (input.users && input.users.length > 0) {
+        const isAllowed = (function () {
+          if (event.team) {
+            const allTeamMembers = event.team.members.map((member) => member.userId);
+            return input.users!.every((userId: number) => allTeamMembers.includes(userId));
+          }
+          return input.users!.every((userId: number) => userId === ctx.user.id);
+        })();
+
+        if (!isAllowed) {
+          console.warn(
+            `User ${ctx.user.id} attempted to assign event ${event.id} to users ${input.users.join(", ")}.`
+          );
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message: "Cannot assign event to users outside of team membership",
+          });
+        }
+      }
+
+      return next();
+    });
+};
 
 export function isPeriodType(keyInput: string): keyInput is PeriodType {
   return Object.keys(PeriodType).includes(keyInput);
@@ -135,7 +246,7 @@ export function handleCustomInputs(customInputs: CustomInputSchema[], eventTypeI
   };
 }
 
-export function ensureUniqueBookingFields(fields: z.infer<typeof EventTypeUpdateInput>["bookingFields"]) {
+export function ensureUniqueBookingFields(fields: TUpdateInputSchema["bookingFields"]) {
   if (!fields) {
     return;
   }
@@ -154,138 +265,49 @@ export function ensureUniqueBookingFields(fields: z.infer<typeof EventTypeUpdate
   }, {} as Record<string, true>);
 }
 
-type Host = {
-  userId: number;
-  isFixed?: boolean | undefined;
-  priority?: number | null | undefined;
-  weight?: number | null | undefined;
-};
-
-type User = {
-  id: number;
-  email: string;
-};
-
-export async function addWeightAdjustmentToNewHosts({
-  hosts,
-  isWeightsEnabled,
-  eventTypeId,
-  prisma,
-}: {
-  hosts: Host[];
-  isWeightsEnabled: boolean;
-  eventTypeId: number;
-  prisma: PrismaClient;
-}): Promise<(Host & { weightAdjustment?: number })[]> {
-  if (!isWeightsEnabled) return hosts;
-
-  // to also have the user email to check for attendees
-  const usersWithHostData = await prisma.user.findMany({
-    where: {
-      id: {
-        in: hosts.map((host) => host.userId),
-      },
-    },
-    select: {
-      email: true,
-      id: true,
-      hosts: {
-        where: {
-          eventTypeId,
-        },
-        select: {
-          isFixed: true,
-          weightAdjustment: true,
-          priority: true,
-          weight: true,
-        },
-      },
-    },
-  });
-
-  const hostsWithUserData = usersWithHostData.map((user) => {
-    // user.hosts[0] is the previous host data from the db
-    // hostData is the new host data
-    const hostData = hosts.find((host) => host.userId === user.id);
-    return {
-      isNewRRHost: !hostData?.isFixed && (!user.hosts.length || user.hosts[0].isFixed),
-      isFixed: hostData?.isFixed ?? false,
-      weightAdjustment: hostData?.isFixed ? 0 : user.hosts[0]?.weightAdjustment ?? 0,
-      priority: hostData?.priority ?? 2,
-      weight: hostData?.weight ?? 100,
-      user: {
-        id: user.id,
-        email: user.email,
-      },
-    };
-  });
-
-  const ongoingRRHosts = hostsWithUserData.filter((host) => !host.isFixed && !host.isNewRRHost);
-  const allRRHosts = hosts.filter((host) => !host.isFixed);
-
-  if (ongoingRRHosts.length === allRRHosts.length) {
-    //no new RR host was added
-    return hostsWithUserData.map((host) => ({
-      userId: host.user.id,
-      isFixed: host.isFixed,
-      priority: host.priority,
-      weight: host.weight,
-      weightAdjustment: host.weightAdjustment,
-    }));
+export function ensureEmailOrPhoneNumberIsPresent(fields: TUpdateInputSchema["bookingFields"]) {
+  if (!fields || fields.length === 0) {
+    return;
   }
 
-  const ongoingHostBookings = await BookingRepository.getAllBookingsForRoundRobin({
-    eventTypeId,
-    users: ongoingRRHosts.map((host) => {
-      return { id: host.user.id, email: host.user.email };
-    }),
-  });
+  const attendeePhoneNumberField = fields.find((field) => field.name === "attendeePhoneNumber");
 
-  const { ongoingHostsWeightAdjustment, ongoingHostsWeights } = ongoingRRHosts.reduce(
-    (acc, host) => {
-      acc.ongoingHostsWeightAdjustment += host.weightAdjustment ?? 0;
-      acc.ongoingHostsWeights += host.weight ?? 0;
-      return acc;
-    },
-    { ongoingHostsWeightAdjustment: 0, ongoingHostsWeights: 0 }
-  );
+  const emailField = fields.find((field) => field.name === "email");
 
-  const hostsWithWeightAdjustments = await Promise.all(
-    hostsWithUserData.map(async (host) => {
-      let weightAdjustment = !host.isFixed ? host.weightAdjustment : 0;
-      if (host.isNewRRHost) {
-        // host can already have bookings, if they ever was assigned before
-        const existingBookings = await BookingRepository.getAllBookingsForRoundRobin({
-          eventTypeId,
-          users: [{ id: host.user.id, email: host.user.email }],
-        });
-
-        const proportionalNrOfBookings =
-          ((ongoingHostBookings.length + ongoingHostsWeightAdjustment) / ongoingHostsWeights) * host.weight;
-        weightAdjustment = proportionalNrOfBookings - existingBookings.length;
-      }
-
-      return {
-        userId: host.user.id,
-        isFixed: host.isFixed,
-        priority: host.priority,
-        weight: host.weight,
-        weightAdjustment: weightAdjustment > 0 ? Math.floor(weightAdjustment) : 0,
-      };
-    })
-  );
-
-  return hostsWithWeightAdjustments;
+  if (emailField?.hidden && attendeePhoneNumberField?.hidden) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "booking_fields_email_and_phone_both_hidden",
+    });
+  }
+  if (!emailField?.required && !attendeePhoneNumberField?.required) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "booking_fields_email_or_phone_required",
+    });
+  }
+  if (emailField?.hidden && !attendeePhoneNumberField?.required) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "booking_fields_phone_required_when_email_hidden",
+    });
+  }
+  if (attendeePhoneNumberField?.hidden && !emailField?.required) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "booking_fields_email_required_when_phone_hidden",
+    });
+  }
 }
+
 export const mapEventType = async (eventType: EventType) => ({
   ...eventType,
   safeDescription: eventType?.description ? markdownToSafeHTML(eventType.description) : undefined,
   users: await Promise.all(
-    (!!eventType?.hosts?.length ? eventType?.hosts.map((host) => host.user) : eventType.users).map(
-      async (u) =>
-        await UserRepository.enrichUserWithItsProfile({
-          user: u,
-        })
+    (eventType?.hosts?.length ? eventType.hosts.map((host) => host.user) : eventType.users).map(async (u) =>
+      new UserRepository(prisma).enrichUserWithItsProfile({
+        user: u,
+      })
     )
   ),
   metadata: eventType.metadata ? EventTypeMetaDataSchema.parse(eventType.metadata) : null,
@@ -295,7 +317,7 @@ export const mapEventType = async (eventType: EventType) => ({
       users: await Promise.all(
         c.users.map(
           async (u) =>
-            await UserRepository.enrichUserWithItsProfile({
+            await new UserRepository(prisma).enrichUserWithItsProfile({
               user: u,
             })
         )

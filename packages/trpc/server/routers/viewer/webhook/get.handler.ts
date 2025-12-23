@@ -1,5 +1,5 @@
-import { prisma } from "@calcom/prisma";
-import type { TrpcSessionUser } from "@calcom/trpc/server/trpc";
+import { WebhookRepository } from "@calcom/features/webhooks/lib/repository/WebhookRepository";
+import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 import type { TGetInputSchema } from "./get.schema";
 
@@ -11,20 +11,6 @@ type GetOptions = {
 };
 
 export const getHandler = async ({ ctx: _ctx, input }: GetOptions) => {
-  return await prisma.webhook.findUniqueOrThrow({
-    where: {
-      id: input.webhookId,
-    },
-    select: {
-      id: true,
-      subscriberUrl: true,
-      payloadTemplate: true,
-      active: true,
-      eventTriggers: true,
-      secret: true,
-      teamId: true,
-      userId: true,
-      platform: true,
-    },
-  });
+  const webhookRepository = WebhookRepository.getInstance();
+  return await webhookRepository.findByWebhookId(input.webhookId);
 };

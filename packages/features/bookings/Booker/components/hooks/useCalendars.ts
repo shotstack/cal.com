@@ -14,6 +14,11 @@ export type UseCalendarsReturnType = ReturnType<typeof useCalendars>;
 type UseCalendarsProps = {
   hasSession: boolean;
 };
+export type ToggledConnectedCalendars = Set<{
+  credentialId: number;
+  externalId: string;
+}>;
+
 export const useCalendars = ({ hasSession }: UseCalendarsProps) => {
   const searchParams = useSearchParams();
   const selectedDate = useBookerStore((state) => state.selectedDate);
@@ -55,7 +60,7 @@ export const useCalendars = ({ hasSession }: UseCalendarsProps) => {
     [isError]
   );
 
-  const { data, isPending } = trpc.viewer.connectedCalendars.useQuery(undefined, {
+  const { data, isPending } = trpc.viewer.calendars.connectedCalendars.useQuery(undefined, {
     enabled: !!calendarSettingsOverlay || Boolean(searchParams?.get("overlayCalendar")),
   });
 
@@ -64,7 +69,7 @@ export const useCalendars = ({ hasSession }: UseCalendarsProps) => {
     isOverlayCalendarEnabled: switchEnabled,
     connectedCalendars: data?.connectedCalendars || [],
     loadingConnectedCalendar: isPending,
-    onToggleCalendar: () => {
+    onToggleCalendar: (data: ToggledConnectedCalendars) => {
       utils.viewer.availability.calendarOverlay.reset();
     },
   };

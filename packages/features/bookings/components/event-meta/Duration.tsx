@@ -1,12 +1,14 @@
-import type { TFunction } from "next-i18next";
+import type { TFunction } from "i18next";
 import { useEffect, useRef } from "react";
 
-import { useIsPlatform } from "@calcom/atoms/monorepo";
-import { useBookerStore } from "@calcom/features/bookings/Booker/store";
+import { useIsPlatform } from "@calcom/atoms/hooks/useIsPlatform";
+import { useIsEmbed } from "@calcom/embed-core/embed-iframe";
+import { useShouldShowArrows } from "@calcom/features/apps/components/AllApps";
+import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
 import type { BookerEvent } from "@calcom/features/bookings/types";
-import { classNames } from "@calcom/lib";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { useShouldShowArrows, Icon } from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+import { Icon } from "@calcom/ui/components/icon";
 
 /** Render X mins as X hours or X hours Y mins instead of in minutes once >= 60 minutes */
 export const getDurationFormatted = (mins: number | undefined, t: TFunction) => {
@@ -43,7 +45,7 @@ export const EventDuration = ({
   const { t } = useLocale();
   const itemRefs = useRef<(HTMLLIElement | null)[]>([]);
   const isPlatform = useIsPlatform();
-  const [selectedDuration, setSelectedDuration, state] = useBookerStore((state) => [
+  const [selectedDuration, setSelectedDuration, state] = useBookerStoreContext((state) => [
     state.selectedDuration,
     state.setSelectedDuration,
     state.state,
@@ -64,7 +66,7 @@ export const EventDuration = ({
   };
 
   const isDynamicEvent = "isDynamic" in event && event.isDynamic;
-
+  const isEmbed = useIsEmbed();
   // Sets initial value of selected duration to the default duration.
   useEffect(() => {
     // Only store event duration in url if event has multiple durations.
@@ -74,7 +76,9 @@ export const EventDuration = ({
 
   useEffect(() => {
     const timeout = setTimeout(() => {
+      if (isEmbed) return;
       if (selectedDuration && itemRefs.current[selectedDuration]) {
+        // eslint-disable-next-line @calcom/eslint/no-scroll-into-view-embed -- Called on !isEmbed case
         itemRefs.current[selectedDuration]?.scrollIntoView({
           behavior: "smooth",
           block: "center",
@@ -83,9 +87,9 @@ export const EventDuration = ({
       }
     }, 100);
     return () => clearTimeout(timeout);
-  }, [selectedDuration]);
+  }, [selectedDuration, isEmbed]);
 
-  if ((!event?.metadata?.multipleDuration && !isDynamicEvent) || isPlatform)
+  if (!event?.metadata?.multipleDuration && !isDynamicEvent)
     return <>{getDurationFormatted(event.length, t)}</>;
 
   const durations = event?.metadata?.multipleDuration || [15, 30, 60, 90];
@@ -97,7 +101,7 @@ export const EventDuration = ({
           <div className="bg-default flex h-9 w-5 items-center justify-end rounded-md">
             <Icon name="chevron-left" className="text-subtle h-4 w-4" />
           </div>
-          <div className="to-default flex h-9 w-5 bg-gradient-to-l from-transparent" />
+          <div className="to-default flex h-9 w-5 bg-linear-to-l from-transparent" />
         </button>
       )}
       <ul
@@ -123,7 +127,7 @@ export const EventDuration = ({
       </ul>
       {rightVisible && (
         <button onClick={handleRight} className="absolute bottom-0 right-0 flex">
-          <div className="to-default flex h-9 w-5 bg-gradient-to-r from-transparent" />
+          <div className="to-default flex h-9 w-5 bg-linear-to-r from-transparent" />
           <div className="bg-default flex h-9 w-5 items-center justify-end rounded-md">
             <Icon name="chevron-right" className="text-subtle h-4 w-4" />
           </div>

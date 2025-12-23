@@ -3,7 +3,7 @@ import useDigitInput from "react-digit-input";
 import { useFormContext } from "react-hook-form";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Label, Input } from "@calcom/ui";
+import { Input, Label } from "@calcom/ui/components/form";
 
 export default function TwoFactor({ center = true, autoFocus = true }) {
   const [value, onChange] = useState("");
@@ -22,10 +22,10 @@ export default function TwoFactor({ center = true, autoFocus = true }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  const className = "h-12 w-12 !text-xl text-center";
+  const className = "h-12 w-12 text-xl! text-center";
 
   return (
-    <div className={center ? "mx-auto !mt-0 max-w-sm" : "!mt-0 max-w-sm"}>
+    <div className={center ? "mx-auto mt-0! max-w-sm" : "mt-0! max-w-sm"}>
       <Label className="mt-4">{t("2fa_code")}</Label>
 
       <p className="text-subtle mb-4 text-sm">{t("2fa_enabled_instructions")}</p>

@@ -2,16 +2,34 @@
 import { FloatingButton } from "./FloatingButton/FloatingButton";
 import { Inline } from "./Inline/inline";
 import { ModalBox } from "./ModalBox/ModalBox";
-import type { InterfaceWithParent, interfaceWithParent, PrefillAndIframeAttrsConfig } from "./embed-iframe";
+import {
+  EMBED_MODAL_IFRAME_FORCE_RELOAD_THRESHOLD_MS,
+  EMBED_MODAL_IFRAME_SLOT_STALE_TIME,
+  EMBED_MODAL_PRERENDER_PREVENT_THRESHOLD_MS,
+} from "./constants";
+import type { InterfaceWithParent, interfaceWithParent } from "./embed-iframe";
 import css from "./embed.css";
+import { getScrollableAncestor } from "./lib/domUtils";
+import { getScrollByDistanceHandler } from "./lib/eventHandlers/scrollByDistanceEventHandler";
+import {
+  fromEntriesWithDuplicateKeys,
+  isRouterPath,
+  generateDataAttributes,
+  getConfigProp,
+  isSameBookingLink,
+  buildConfigWithPrerenderRelatedFields,
+} from "./lib/utils";
 import { SdkActionManager } from "./sdk-action-manager";
 import type { EventData, EventDataMap } from "./sdk-action-manager";
-import allCss from "./tailwind.generated.css?inline";
-import type { UiConfig } from "./types";
+import tailwindCss from "./tailwindCss";
+import type { UiConfig, EmbedPageType, PrefillAndIframeAttrsConfig, ModalPrerenderOptions } from "./types";
+import { getMaxHeightForModal } from "./ui-utils";
 
-export type { PrefillAndIframeAttrsConfig } from "./embed-iframe";
+// Exporting for consumption by @calcom/embed-core user
+export type { EmbedEvent } from "./sdk-action-manager";
+export type { PrefillAndIframeAttrsConfig } from "./types";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Rest<T extends any[]> = T extends [any, ...infer U] ? U : never;
+type Rest<T extends any[] | undefined> = T extends [any, ...infer U] ? U : never;
 export type Message = {
   originator: string;
   method: keyof InterfaceWithParent;
@@ -27,12 +45,26 @@ customElements.define("cal-inline", Inline);
 
 declare module "*.css";
 type Namespace = string;
-type Config = {
+type CalConfig = {
   calOrigin: string;
   debug?: boolean;
   uiDebug?: boolean;
 };
-type InitArgConfig = Partial<Config> & {
+
+type ModalBoxElement = Element & {
+  uid?: string;
+};
+
+type ModalStateData = {
+  embedConfig: PrefillAndIframeAttrsConfigWithGuestAndColorScheme;
+  previousEmbedConfig: PrefillAndIframeAttrsConfigWithGuestAndColorScheme | null;
+  embedRenderStartTime: number;
+  previousEmbedRenderStartTime: number | null;
+  isConnectionInitiated: boolean;
+  prerenderOptions: ModalPrerenderOptions | null;
+};
+
+type InitArgConfig = Partial<CalConfig> & {
   origin?: string;
 };
 
@@ -48,19 +80,11 @@ if (!globalCal || !globalCal.q) {
   throw new Error("Cal is not defined. This shouldn't happen");
 }
 
-// Store Commit Hash to know exactly what version of the code is running
-// TODO: Ideally it should be the version as per package.json and then it can be renamed to version.
-// But because it is built on local machine right now, it is much more reliable to have the commit hash.
-globalCal.fingerprint = process.env.EMBED_PUBLIC_EMBED_FINGER_PRINT as string;
-globalCal.version = process.env.EMBED_PUBLIC_EMBED_VERSION as string;
-globalCal.__css = allCss;
+initializeGlobalCalProps();
+
 document.head.appendChild(document.createElement("style")).innerHTML = css;
 
-function log(...args: unknown[]) {
-  console.log(...args);
-}
-
-// eslint-disable-next-line @typescript-eslint/ban-types
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 type ValidationSchemaPropType = string | Function;
 
 type ValidationSchema = {
@@ -125,26 +149,36 @@ function getColorScheme(el: Element) {
 }
 
 function withColorScheme(
-  queryObject: PrefillAndIframeAttrsConfig & { guest?: string | string[] },
+  config: PrefillAndIframeAttrsConfigWithGuest,
   containerEl: Element
-) {
+): PrefillAndIframeAttrsConfigWithGuestAndColorScheme {
   // If color-scheme not explicitly configured, keep it same as the webpage that has the iframe
   // This is done to avoid having an opaque background of iframe that arises when they aren't same. We really need to have a transparent background to make embed part of the page
   // https://fvsch.com/transparent-iframes#:~:text=the%20resolution%20was%3A-,If%20the%20color%20scheme%20of%20an%20iframe%20differs%20from%20embedding%20document%2C%20iframe%20gets%20an%20opaque%20canvas%20background%20appropriate%20to%20its%20color%20scheme.,-So%20the%20dark
-  if (!queryObject["ui.color-scheme"]) {
+  if (!config["ui.color-scheme"]) {
     const colorScheme = getColorScheme(containerEl);
-    // Only handle two color-schemes for now. We don't want to have unintented affect by always explicitly adding color-scheme
+    // Only handle two color-schemes for now. We don't want to have unintended affect by always explicitly adding color-scheme
     if (colorScheme) {
-      queryObject["ui.color-scheme"] = colorScheme;
+      config["ui.color-scheme"] = colorScheme;
     }
   }
-  return queryObject;
+  return config;
 }
 
+type allPossibleCallbacksAndActions = {
+  [K in keyof EventDataMap]: {
+    action: K;
+    callback: (arg0: CustomEvent<EventData<K>>) => void;
+  };
+}[keyof EventDataMap];
+
 type SingleInstructionMap = {
-  // TODO: This makes api("on", {}) loose it's generic type. Find a way to fix it.
-  // e.g. api("on", { action: "__dimensionChanged", callback: (e) => { /* `e.detail.data` has all possible values for all events/actions */} });
-  [K in keyof CalApi]: CalApi[K] extends (...args: never[]) => void ? [K, ...Parameters<CalApi[K]>] : never;
+  on: ["on", allPossibleCallbacksAndActions];
+  off: ["off", allPossibleCallbacksAndActions];
+} & {
+  [K in Exclude<keyof CalApi, "on" | "off">]: CalApi[K] extends (...args: never[]) => void
+  ? [K, ...Parameters<CalApi[K]>]
+  : never;
 };
 
 type SingleInstruction = SingleInstructionMap[keyof SingleInstructionMap];
@@ -152,12 +186,38 @@ type SingleInstruction = SingleInstructionMap[keyof SingleInstructionMap];
 export type Instruction = SingleInstruction | SingleInstruction[];
 export type InstructionQueue = Instruction[];
 
+const excludeParam = (key: string, _value: unknown) => {
+  const paramsReservedByBookingForm = [
+    "month",
+    "date",
+    "slot",
+    "rescheduleUid",
+    "bookingUid",
+    "duration",
+    "overlayCalendar",
+  ];
+
+  const EXCLUDED_PARAMS = [...paramsReservedByBookingForm];
+
+  if (EXCLUDED_PARAMS.includes(key)) return true;
+
+  return false;
+};
+
+type PrefillAndIframeAttrsConfigWithGuest = PrefillAndIframeAttrsConfig & {
+  guest?: string | string[];
+};
+
+type PrefillAndIframeAttrsConfigWithGuestAndColorScheme = PrefillAndIframeAttrsConfigWithGuest & {
+  "ui.color-scheme"?: string | null;
+};
+
 export class Cal {
   iframe?: HTMLIFrameElement;
 
-  __config: Config;
+  __config: CalConfig;
 
-  modalBox?: Element;
+  modalBox?: ModalBoxElement;
 
   inlineEl?: Element;
 
@@ -171,17 +231,21 @@ export class Cal {
 
   api: CalApi;
 
-  isPerendering?: boolean;
+  isPrerendering?: boolean;
 
   static actionsManagers: Record<Namespace, SdkActionManager>;
-
-  static getQueryObject(config: PrefillAndIframeAttrsConfig) {
+  // Store calLink separately and not rely on deriving it from iframe.src, because we could load different URL in iframe(derived from calLink e.g. calLink=Router -> redirects to eventBookingUrl and then we load that URL in iframe)
+  calLink: string | null = null;
+  embedConfig: PrefillAndIframeAttrsConfig | null = null;
+  // Tracks the time when the embed was last rendered with some changes to iframe i.e. it identifies if the iframe is freshly updated and when
+  embedRenderStartTime: number | null = null;
+  static ensureGuestKey(config: PrefillAndIframeAttrsConfig) {
     config = config || {};
     return {
       ...config,
       // guests is better for API but Booking Page accepts guest. So do the mapping
       guest: config.guests ?? undefined,
-    } as PrefillAndIframeAttrsConfig & { guest?: string | string[] };
+    } as PrefillAndIframeAttrsConfigWithGuest;
   }
 
   processInstruction(instructionAsArgs: IArguments | Instruction) {
@@ -199,7 +263,7 @@ export class Cal {
     const [method, ...args] = instruction;
     if (!this.api[method]) {
       // Instead of throwing error, log and move forward in the queue
-      log(`Instruction ${method} not FOUND`);
+      error(`Instruction ${method} not FOUND`);
     }
     try {
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -207,7 +271,7 @@ export class Cal {
       this.api[method](...args);
     } catch (e) {
       // Instead of throwing error, log and move forward in the queue
-      log(`Instruction couldn't be executed`, e);
+      error(`Instruction couldn't be executed`, e);
     }
     return instruction;
   }
@@ -231,57 +295,70 @@ export class Cal {
    */
   createIframe({
     calLink,
-    queryObject = {},
+    config = {},
     calOrigin,
   }: {
     calLink: string;
-    queryObject?: PrefillAndIframeAttrsConfig & { guest?: string | string[] };
+    config?: PrefillAndIframeAttrsConfigWithGuestAndColorScheme;
     calOrigin: string | null;
   }) {
     const iframe = (this.iframe = document.createElement("iframe"));
     iframe.className = "cal-embed";
     iframe.name = `cal-embed=${this.namespace}`;
     iframe.title = `Book a call`;
-    const config = this.getConfig();
-    const { iframeAttrs, ...restQueryObject } = queryObject;
+
+    this.loadInIframe({ calLink, config, calOrigin, iframe });
+    return iframe;
+  }
+
+  loadInIframe({
+    calLink,
+    config = {},
+    calOrigin,
+    iframe,
+  }: {
+    iframe: HTMLIFrameElement;
+    calLink: string;
+    config?: PrefillAndIframeAttrsConfig;
+    calOrigin: string | null;
+  }) {
+    log("Loading in iframe", calLink, "with config", JSON.stringify(config));
+    iframe.dataset.calLink = calLink;
+    const calConfig = this.getCalConfig();
+    const { iframeAttrs, ...queryParamsFromConfig } = config;
 
     if (iframeAttrs && iframeAttrs.id) {
       iframe.setAttribute("id", iframeAttrs.id);
     }
 
-    // Prepare searchParams from config
-    const searchParams = new URLSearchParams();
-    for (const [key, value] of Object.entries(restQueryObject)) {
-      if (value === undefined) {
-        continue;
-      }
-      if (value instanceof Array) {
-        value.forEach((val) => searchParams.append(key, val));
-      } else {
-        searchParams.set(key, value as string);
-      }
-    }
+    iframe.setAttribute("allow", "payment");
+
+    const searchParams = this.buildFilteredQueryParams(queryParamsFromConfig);
 
     // cal.com has rewrite issues on Safari that sometimes cause 404 for assets.
-    const originToUse = (calOrigin || config.calOrigin || "").replace(
+    const originToUse = (calOrigin || calConfig.calOrigin || "").replace(
       "https://cal.com",
       "https://app.cal.com"
     );
+
     const urlInstance = new URL(`${originToUse}/${calLink}`);
     if (!urlInstance.pathname.endsWith("embed")) {
       // TODO: Make a list of patterns that are embeddable. All except that should be allowed with a warning that "The page isn't optimized for embedding"
       urlInstance.pathname = `${urlInstance.pathname}/embed`;
     }
+
     urlInstance.searchParams.set("embed", this.namespace);
 
-    if (config.debug) {
-      urlInstance.searchParams.set("debug", `${config.debug}`);
+    const pageParams = this.getQueryParamsFromPage();
+    // cal.embed.logging=1 enabled logging in parent and by setting debug=true in iframe, it enables logging in iframe(child) as well
+    if (calConfig.debug || pageParams["cal.embed.logging"] === "1") {
+      urlInstance.searchParams.set("debug", "true");
     }
 
     // Keep iframe invisible, till the embedded calLink sets its color-scheme. This is so that there is no flash of non-transparent(white/black) background
     iframe.style.visibility = "hidden";
 
-    if (config.uiDebug) {
+    if (calConfig.uiDebug) {
       iframe.style.border = "1px solid green";
     }
 
@@ -291,11 +368,26 @@ export class Cal {
     for (const [key, value] of searchParams) {
       urlInstance.searchParams.append(key, value);
     }
+
+    // Very Important:Reset iframe ready flag and clear queue, as iframe might load a fresh URL and we need to check when it is ready.
+    this.iframeReset();
+
+    if (iframe.src === urlInstance.toString()) {
+      // Ensure reload occurs even if the url is same - Though browser normally does it, but would be better to ensure it
+      // This param has no other purpose except to ensure forced reload.
+      urlInstance.searchParams.append("__cal.reloadTs", Date.now().toString());
+    }
+
     iframe.src = urlInstance.toString();
     return iframe;
   }
 
-  getConfig() {
+  /**
+   * Returns the config applicable to entire Cal namespace.
+   * Individual embeds can have their own embed config passed via `config` prop normally.
+   * Also, calOrigin could be passed individually as well at the moment
+   */
+  getCalConfig() {
     return this.__config;
   }
 
@@ -315,6 +407,11 @@ export class Cal {
         "*"
       );
     }
+  }
+
+  iframeReset() {
+    this.iframeReady = false;
+    this.iframeDoQueue = [];
   }
 
   constructor(namespace: string, q: Queue) {
@@ -348,28 +445,25 @@ export class Cal {
       }
 
       if (this.modalBox) {
-        // It ensures that if the iframe is so tall that it can't fit in the parent window without scroll. Then force the scroll by restricting the max-height to innerHeight
-        // This case is reproducible when viewing in ModalBox on Mobile.
-        const spacingTopPlusBottom = 2 * 50; // 50 is the padding we want to keep to show close button comfortably. Make it same as top for bottom.
-        iframe.style.maxHeight = `${window.innerHeight - spacingTopPlusBottom}px`;
+        iframe.style.maxHeight = `${getMaxHeightForModal()}px`;
       }
     });
 
-    this.actionManager.on("__iframeReady", () => {
+    this.actionManager.on("__iframeReady", (e) => {
       this.iframeReady = true;
-      if (this.iframe) {
+      if (this.iframe && !e.detail.data.isPrerendering) {
         // It's a bit late to make the iframe visible here. We just needed to wait for the HTML tag of the embedded calLink to be rendered(which then informs the browser of the color-scheme)
-        // Right now it would wait for embed-iframe.js bundle to be loaded as well. We can speed that up by inlining the JS that informs about color-scheme being set in the HTML.
+        // TODO: Right now it would wait for embed-iframe.js bundle to be loaded as well. We can speed that up by inlining the JS that informs about color-scheme being set in the HTML.
         // But it's okay to do it here for now because the embedded calLink also keeps itself hidden till it receives `parentKnowsIframeReady` message(It has it's own reasons for that)
         // Once the embedded calLink starts not hiding the document, we should optimize this line to make the iframe visible earlier than this.
-
-        // Imp: Don't use visiblity:visible as that would make the iframe show even if the host element(A paren tof the iframe) has visiblity:hidden set. Just reset the visibility to default
+        // Imp: Don't use visibility:visible as that would make the iframe show even if the host element(A parent of the iframe) has visibility:hidden set. Just reset the visibility to default
         this.iframe.style.visibility = "";
       }
       this.doInIframe({ method: "parentKnowsIframeReady" } as const);
       this.iframeDoQueue.forEach((doInIframeArg) => {
         this.doInIframe(doInIframeArg);
       });
+      this.iframeDoQueue = [];
     });
 
     this.actionManager.on("__routeChanged", () => {
@@ -384,11 +478,18 @@ export class Cal {
       }
     });
 
+    this.actionManager.on("__scrollByDistance", getScrollByDistanceHandler(this));
+
     this.actionManager.on("linkReady", () => {
-      if (this.isPerendering) {
-        // Absolute check to ensure that we don't mark embed as loaded if it's prerendering otherwise prerendered embed would showup without any user action
+      if (this.isPrerendering) {
+        // Ensure that we don't mark embed as loaded if it's prerendering otherwise prerendered embed could show-up without any user action
+        // linkReady event isn't received anyway by parent as it isn't whitelisted to be sent to parent but it is a safe guard
         return;
       }
+      this.iframe!.style.visibility = "";
+
+      // Removes the loader
+      // TODO: We should be using consistent approach of "state" attribute for modalBox and inlineEl.
       this.modalBox?.setAttribute("state", "loaded");
       this.inlineEl?.setAttribute("loading", "done");
     });
@@ -398,10 +499,336 @@ export class Cal {
       if (!iframe) {
         return;
       }
+      if (this.isPrerendering) {
+        return;
+      }
       this.inlineEl?.setAttribute("data-error-code", e.detail.data.code);
       this.modalBox?.setAttribute("data-error-code", e.detail.data.code);
       this.inlineEl?.setAttribute("loading", "failed");
       this.modalBox?.setAttribute("state", "failed");
+    });
+  }
+
+  scrollByDistance(distanceInPixels: number): void {
+    if (!this.iframe) {
+      return;
+    }
+    // We compute scrollable ancestor on demand here and not when the iframe is created because because we need to see if the ancestor has scrollable content at that time
+    const scrollContainer = getScrollableAncestor(this.iframe);
+    if (!scrollContainer) {
+      return;
+    }
+    const newScrollTop = scrollContainer.scrollTop + distanceInPixels;
+
+    scrollContainer.scrollTo({ top: newScrollTop, behavior: "smooth" });
+  }
+
+  private filterParams(params: Record<string, unknown>): Record<string, unknown> {
+    return Object.fromEntries(Object.entries(params).filter(([key, value]) => !excludeParam(key, value)));
+  }
+
+  private getQueryParamsFromPage() {
+    const queryParamsFromPage = getQueryParamsFromPage();
+    // Ensure valid params are used from the page.
+    return this.filterParams(queryParamsFromPage);
+  }
+
+  private buildFilteredQueryParams(queryParamsFromConfig: PrefillAndIframeAttrsConfig): URLSearchParams {
+    const queryParamsFromPageUrl = globalCal.config?.forwardQueryParams ? this.getQueryParamsFromPage() : {};
+
+    // Query Params via config have higher precedence
+    const mergedQueryParams = { ...queryParamsFromPageUrl, ...queryParamsFromConfig };
+
+    const searchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(mergedQueryParams)) {
+      if (value === undefined) {
+        continue;
+      }
+      if (value instanceof Array) {
+        value.forEach((val) => searchParams.append(key, val));
+      } else {
+        searchParams.set(key, value as string);
+      }
+    }
+
+    return searchParams;
+  }
+
+  getNextActionForModal({
+    modal,
+    pathWithQueryToLoad,
+    stateData,
+  }: {
+    modal: { uid: string };
+    pathWithQueryToLoad: string;
+    stateData: ModalStateData;
+  }) {
+    const {
+      embedConfig,
+      previousEmbedConfig,
+      isConnectionInitiated,
+      previousEmbedRenderStartTime,
+      embedRenderStartTime,
+      prerenderOptions,
+    } = stateData;
+    const calConfig = this.getCalConfig();
+    const lastLoadedUrlInIframeObject = this.getLastLoadedLinkInframe();
+    const lastLoadedPathInIframe = lastLoadedUrlInIframeObject?.pathname ?? null;
+    const urlToLoadObject = new URL(pathWithQueryToLoad, calConfig.calOrigin as string);
+
+    const existingModalEl = document.querySelector(`cal-modal-box[uid="${modal.uid}"]`);
+    const urlToLoadPath = urlToLoadObject.pathname;
+    // We only check for path because query params are handled by connect flow
+    // Also origin we assume never changes without page reload of the embedding page
+    const isSameCalLink =
+      lastLoadedPathInIframe &&
+      isSameBookingLink({
+        bookingLinkPath1: lastLoadedPathInIframe,
+        bookingLinkPath2: urlToLoadPath,
+      });
+
+    const lastLoadedUrlInIframeObjectSearchParams = lastLoadedUrlInIframeObject?.searchParams.toString();
+    const urlToLoadObjectSearchParams = urlToLoadObject.searchParams.toString();
+
+    const areSameQueryParams = lastLoadedUrlInIframeObjectSearchParams === urlToLoadObjectSearchParams;
+
+    const isSameConfig =
+      previousEmbedConfig &&
+      isSameEmbedConfig({
+        embedConfig1: previousEmbedConfig,
+        embedConfig2: embedConfig,
+      });
+    const isInFailedState = existingModalEl && existingModalEl.getAttribute("state") === "failed";
+
+    const timeSinceLastRender = previousEmbedRenderStartTime
+      ? embedRenderStartTime - previousEmbedRenderStartTime
+      : 0;
+    const crossedReloadThreshold = previousEmbedRenderStartTime
+      ? timeSinceLastRender >
+      (prerenderOptions?.iframeForceReloadThresholdMs ?? EMBED_MODAL_IFRAME_FORCE_RELOAD_THRESHOLD_MS)
+      : false;
+
+    const areSlotsStale = previousEmbedRenderStartTime
+      ? timeSinceLastRender > (prerenderOptions?.slotsStaleTimeMs ?? EMBED_MODAL_IFRAME_SLOT_STALE_TIME)
+      : false;
+
+    // Note that we don't worry about change in embed config because that is passed on as query params to the iframe and that is already supported by "connect" flow
+    const isResetNeeded = !isSameCalLink || isInFailedState || crossedReloadThreshold;
+
+    const getActionToTake = () => {
+      if (isResetNeeded) {
+        return "fullReload";
+      }
+
+      if (prerenderOptions?.backgroundSlotsFetch && !areSlotsStale) {
+        return "connect-no-slots-fetch";
+      }
+
+      if (!isSameConfig || !areSameQueryParams || !isConnectionInitiated || areSlotsStale) {
+        return "connect";
+      }
+      return "noAction";
+    };
+
+    const actionToTake = getActionToTake();
+
+    log(
+      "Next Modal Action:",
+      { actionToTake, prerenderOptions },
+      {
+        path: {
+          isSame: isSameCalLink,
+          urlToLoadPath,
+          lastLoadedPathInIframe,
+        },
+        config: {
+          isSame: isSameConfig,
+          previousEmbedConfig,
+          embedConfig,
+        },
+        queryParams: {
+          isSame: areSameQueryParams,
+          lastLoadedUrlInIframeObjectSearchParams,
+          urlToLoadObjectSearchParams,
+        },
+        areSlotsStale,
+        crossedReloadThreshold,
+        isInFailedState,
+        isConnectionInitiated,
+      }
+    );
+
+    return actionToTake;
+
+    function isSameEmbedConfig({
+      embedConfig1,
+      embedConfig2,
+    }: {
+      embedConfig1: PrefillAndIframeAttrsConfig;
+      embedConfig2: PrefillAndIframeAttrsConfig;
+    }) {
+      if (Object.keys(embedConfig1).length !== Object.keys(embedConfig2).length) {
+        return false;
+      }
+      // Verify the two config have all props as same
+      return Object.keys(embedConfig1).every((key) => {
+        if (typeof embedConfig1[key] !== typeof embedConfig2[key]) {
+          return false;
+        }
+        // Now we know both have same type.
+        const embedConfig1Value = embedConfig1[key];
+        const embedConfig2Value = embedConfig2[key];
+        if (embedConfig1Value instanceof Array && embedConfig2Value instanceof Array) {
+          return (
+            embedConfig1Value.length === embedConfig2Value.length &&
+            embedConfig1Value.every((value: string) => embedConfig2Value.includes(value))
+          );
+        }
+        if (typeof embedConfig1Value === "string") {
+          return embedConfig1Value === embedConfig2Value;
+        }
+        return true;
+      });
+    }
+  }
+
+  /**
+   * Returns the last loaded URL in iframe.
+   * Removes /embed from the pathname and returns the origin.
+   */
+  getLastLoadedLinkInframe() {
+    if (!this.iframe || !this.iframe.dataset.calLink) {
+      return null;
+    }
+    const calLink = this.iframe.dataset.calLink;
+    if (!calLink) {
+      return null;
+    }
+    const urlObject = new URL(calLink, new URL(this.iframe.src).origin);
+    return new URL(`${urlObject.pathname}${urlObject.search}`, urlObject.origin);
+  }
+
+  // We record the updated params on dataset.calLink which allows us to determine if something actually changed since the last time we loaded
+  // This is used by getNextActionForModal
+  recordUpdatedParamsForIframe(params: Record<string, string | string[]>) {
+    const lastLoadedUrlInIframeObject = this.getLastLoadedLinkInframe();
+    if (!lastLoadedUrlInIframeObject || !this.iframe) {
+      return;
+    }
+    // Create a clone of the last loaded url object in iframe
+    const urlObject = new URL(lastLoadedUrlInIframeObject.toString());
+    for (const [key, value] of Object.entries(params)) {
+      urlObject.searchParams.set(key, value as string);
+    }
+    this.iframe.dataset.calLink = `${urlObject.pathname.replace(/^\//, "")}${urlObject.search}`;
+  }
+
+  canPrerenderLink({
+    calLink,
+    calOrigin,
+    previousEmbedRenderStartTime,
+  }: {
+    calLink: string;
+    calOrigin: string;
+    previousEmbedRenderStartTime: number | null;
+  }) {
+    const lastLoadedUrlInIframeObject = this.getLastLoadedLinkInframe();
+    // Trying to prerender a link that is already prerendered.
+    // Prevent unnecessary repeat prerenders
+    if (lastLoadedUrlInIframeObject?.toString() === new URL(calLink, calOrigin).toString()) {
+      const isThresholdCrossed = hasCrossedThreshold();
+      if (isThresholdCrossed) {
+        log("Threshold crossed, allowing repeat prerender");
+        return true;
+      }
+      log("Threshold not crossed, preventing repeat prerender");
+      return false;
+    }
+    return true;
+
+    function hasCrossedThreshold() {
+      if (!previousEmbedRenderStartTime) {
+        return false;
+      }
+      const timeDiff = Date.now() - previousEmbedRenderStartTime;
+      if (timeDiff >= EMBED_MODAL_PRERENDER_PREVENT_THRESHOLD_MS) {
+        return true;
+      }
+      return false;
+    }
+  }
+
+  prepareForPrerender({
+    calLink,
+    calOrigin,
+    previousEmbedRenderStartTime,
+    prerenderOptions,
+    isHeadlessRouterPath,
+  }: {
+    calLink: string;
+    calOrigin: string;
+    previousEmbedRenderStartTime: number | null;
+    prerenderOptions: ModalPrerenderOptions;
+    isHeadlessRouterPath: boolean;
+  }) {
+    if (!this.canPrerenderLink({ calLink, calOrigin, previousEmbedRenderStartTime })) {
+      return null;
+    }
+
+    if (this.modalBox) {
+      log("Destroying previous prerendered modalbox");
+      // If we are re-prerendering, we destroy the previous modalbox, allowing user to prerender as many times as they want
+      this.modalBox.remove();
+    }
+
+    const DEFAULT_BACKGROUND_SLOTS_FETCH = isHeadlessRouterPath ? true : false;
+
+    const backgroundSlotsFetch =
+      typeof prerenderOptions.backgroundSlotsFetch === "undefined"
+        ? DEFAULT_BACKGROUND_SLOTS_FETCH
+        : prerenderOptions.backgroundSlotsFetch;
+    const enrichedPrerenderOptions = { ...prerenderOptions, backgroundSlotsFetch };
+
+    // Persist prerender options here so that during CTA click we can use these.
+    this.api.prerenderOptions = enrichedPrerenderOptions;
+    this.isPrerendering = true;
+
+    return { enrichedPrerenderOptions };
+  }
+
+  setModalRenderStartVariables({
+    embedConfig,
+    embedRenderStartTime,
+  }: {
+    embedConfig: PrefillAndIframeAttrsConfig;
+    embedRenderStartTime: number;
+  }) {
+    this.embedConfig = embedConfig;
+    this.embedRenderStartTime = embedRenderStartTime;
+  }
+
+  getPreviousModalRenderStartVariables() {
+    return {
+      embedConfig: this.embedConfig,
+      embedRenderStartTime: this.embedRenderStartTime,
+    };
+  }
+
+  connect({
+    config,
+    params,
+  }: {
+    config: PrefillAndIframeAttrsConfig;
+    params: Record<string, string | string[]>;
+  }) {
+    // Update the iframe query params and record the change as well on the iframe for getNextActionForModal to use
+    this.recordUpdatedParamsForIframe(params);
+    this.doInIframe({
+      method: "connect",
+      arg: {
+        config,
+        params,
+      },
     });
   }
 }
@@ -410,7 +837,8 @@ class CalApi {
   cal: Cal;
   static initializedNamespaces = [] as string[];
   modalUid?: string;
-  preloadedModalUid?: string;
+  prerenderedModalUid?: string;
+  prerenderOptions?: ModalPrerenderOptions;
   constructor(cal: Cal) {
     this.cal = cal;
   }
@@ -422,7 +850,7 @@ class CalApi {
   init(namespaceOrConfig?: string | InitArgConfig, config = {} as InitArgConfig) {
     let initForNamespace = "";
     if (typeof namespaceOrConfig !== "string") {
-      config = (namespaceOrConfig || {}) as Config;
+      config = (namespaceOrConfig || {}) as CalConfig;
     } else {
       initForNamespace = namespaceOrConfig;
     }
@@ -503,11 +931,11 @@ class CalApi {
     }
 
     config.embedType = "inline";
-    const calConfig = this.cal.getConfig();
+    const calConfig = this.cal.getCalConfig();
 
     const iframe = this.cal.createIframe({
       calLink,
-      queryObject: withColorScheme(Cal.getQueryObject(config), containerEl),
+      config: withColorScheme(Cal.ensureGuestKey(config), containerEl),
       calOrigin: calConfig.calOrigin,
     });
 
@@ -515,8 +943,21 @@ class CalApi {
     iframe.style.width = "100%";
 
     containerEl.classList.add("cal-inline-container");
+
     const template = document.createElement("template");
-    template.innerHTML = `<cal-inline style="max-height:inherit;height:inherit;min-height:inherit;display:flex;position:relative;flex-wrap:wrap;width:100%"></cal-inline><style>.cal-inline-container::-webkit-scrollbar{display:none}.cal-inline-container{scrollbar-width:none}</style>`;
+    const layout = getConfigProp(config, "layout");
+    const pageType = getConfigProp(config, "cal.embed.pageType");
+    const theme = getConfigProp(config, "theme");
+
+    template.innerHTML = `<cal-inline 
+      ${generateDataAttributes({
+      pageType,
+      theme,
+      layout,
+    })}
+      style="max-height:inherit;height:inherit;min-height:inherit;display:flex;position:relative;flex-wrap:wrap;width:100%">
+    </cal-inline>
+    <style>.cal-inline-container::-webkit-scrollbar{display:none}.cal-inline-container{scrollbar-width:none}</style>`;
     this.cal.inlineEl = template.content.children[0];
     this.cal.inlineEl.appendChild(iframe);
     containerEl.appendChild(template.content);
@@ -584,63 +1025,208 @@ class CalApi {
     dataset["buttonTextColor"] = `${buttonTextColor}`;
   }
 
-  modal({
+  async modal({
     calLink,
     config = {},
     calOrigin,
     __prerender = false,
+    prerenderOptions = {},
   }: {
     calLink: string;
     config?: PrefillAndIframeAttrsConfig;
     calOrigin?: string;
     __prerender?: boolean;
+    prerenderOptions?: ModalPrerenderOptions;
   }) {
-    const uid = this.modalUid || this.preloadedModalUid || String(Date.now()) || "0";
-    const isConnectingToPreloadedModal = this.preloadedModalUid && !this.modalUid;
-
-    const containerEl = document.body;
-
-    this.cal.isPerendering = !!__prerender;
-
-    if (__prerender) {
-      // Add preload query param
-      config.prerender = "true";
-    }
-
-    const queryObject = withColorScheme(Cal.getQueryObject(config), containerEl);
-    const existingModalEl = document.querySelector(`cal-modal-box[uid="${uid}"]`);
-
-    if (existingModalEl) {
-      if (isConnectingToPreloadedModal) {
-        this.cal.doInIframe({
-          method: "connect",
-          arg: queryObject,
-        });
-        this.modalUid = uid;
-        existingModalEl.setAttribute("state", "loading");
-        return;
-      } else {
-        existingModalEl.setAttribute("state", "reopening");
-        return;
-      }
-    }
-
-    if (__prerender) {
-      this.preloadedModalUid = uid;
-    }
-
+    const isPrerendering = !!__prerender;
     if (typeof config.iframeAttrs === "string" || config.iframeAttrs instanceof Array) {
       throw new Error("iframeAttrs should be an object");
     }
+    const containerEl = document.body;
+    const calConfig = this.cal.getCalConfig();
+    // Clone so that it doesn't mutate the original config
+    config = { ...config };
 
-    config.embedType = "modal";
+    // calOrigin could have been passed as empty string by the user
+    calOrigin = calOrigin || calConfig.calOrigin;
+
+    const calLinkUrlObject = new URL(calLink, calOrigin);
+    const isHeadlessRouterPath = calLinkUrlObject ? isRouterPath(calLinkUrlObject.toString()) : false;
+    const { embedConfig: previousEmbedConfig, embedRenderStartTime: previousEmbedRenderStartTime } =
+      this.cal.getPreviousModalRenderStartVariables();
+
+    let enrichedConfig;
+    const configWithGuestKeyAndColorScheme = withColorScheme(
+      Cal.ensureGuestKey({
+        ...config,
+        embedType: "modal",
+      }),
+      containerEl
+    );
+
+    let enrichedPrerenderOptions;
+    if (isPrerendering) {
+      const preparationResult = this.cal.prepareForPrerender({
+        calLink,
+        calOrigin,
+        previousEmbedRenderStartTime,
+        prerenderOptions,
+        isHeadlessRouterPath,
+      });
+
+      if (!preparationResult) {
+        log(`Prevented unnecessary repeat prerender for ${calLink}`);
+        return {
+          status: "prerender-prevented",
+        };
+      }
+
+      enrichedPrerenderOptions = preparationResult.enrichedPrerenderOptions;
+      enrichedConfig = buildConfigWithPrerenderRelatedFields({
+        config: configWithGuestKeyAndColorScheme,
+        isHeadlessRouterPath,
+        backgroundSlotsFetch: !!this.prerenderOptions?.backgroundSlotsFetch,
+      });
+    } else {
+      this.cal.isPrerendering = false;
+      enrichedConfig = configWithGuestKeyAndColorScheme;
+    }
+
+    // `this.modalUid` is set in non-preload case(Temporarily not being-set)
+    // `this.prerenderedModalUid` is set for a modal created through "prerender"
+    const reusableModalUid = this.modalUid || this.prerenderedModalUid;
+    const uid = reusableModalUid || String(Date.now());
+    // Means whether there is already an attempt to use the prerendered modal
+    const isConnectionInitiated = !!(this.modalUid && this.prerenderedModalUid);
+    const embedRenderStartTime = Date.now();
+
+    const stateData = {
+      embedConfig: enrichedConfig,
+      previousEmbedConfig,
+      embedRenderStartTime,
+      previousEmbedRenderStartTime,
+      isConnectionInitiated,
+      // If prerenderOptions are available, use them. Otherwise use the prerenderOptions from the previous call to modal for prerender
+      prerenderOptions: enrichedPrerenderOptions ?? this.prerenderOptions ?? null,
+    };
+
+    this.cal.setModalRenderStartVariables({
+      embedConfig: enrichedConfig,
+      embedRenderStartTime,
+    });
+
+    return this.__modal({
+      calLink,
+      enrichedConfig,
+      calOrigin,
+      isPrerendering,
+      stateData,
+      uid,
+      containerEl,
+    });
+  }
+
+  async __modal({
+    uid,
+    calLink,
+    enrichedConfig,
+    calOrigin,
+    isPrerendering,
+    stateData,
+    containerEl,
+  }: {
+    uid: string;
+    calLink: string;
+    enrichedConfig: PrefillAndIframeAttrsConfig;
+    calOrigin: string;
+    isPrerendering: boolean;
+    stateData: ModalStateData;
+    containerEl: HTMLElement;
+  }) {
+    const calLinkUrlObject = new URL(calLink, calOrigin);
+    const isHeadlessRouterPath = calLinkUrlObject ? isRouterPath(calLinkUrlObject.toString()) : false;
+
+    const existingModalEl = document.querySelector(`cal-modal-box[uid="${uid}"]`);
+    // isConnectionPossible
+    if (!!existingModalEl && !!this.cal.iframe) {
+      log(`Trying to reuse modal ${uid}`);
+      const lastLoadedUrlObject = this.cal.getLastLoadedLinkInframe();
+      const lastLoadedPathIsRouter = lastLoadedUrlObject?.pathname?.includes("/router");
+
+      if (isHeadlessRouterPath && !lastLoadedPathIsRouter) {
+        throw new Error(
+          "`prerender` instruction should have been fired with headless router path as calLink(i.e. router?form={FORM_ID}&PARAMS=VALUES)"
+        );
+      } else {
+        const actionToTake = this.cal.getNextActionForModal({
+          modal: { uid },
+          pathWithQueryToLoad: `${calLinkUrlObject.pathname}${calLinkUrlObject.search}`,
+          stateData,
+        });
+
+        if (actionToTake === "noAction") {
+          if (isPrerendering) {
+            // A prerender instruction can never show the modal
+            return;
+          }
+          log(`Reopening modal without any other action needed ${uid}`);
+          // Reopen the modal, nothing else to do
+          existingModalEl.setAttribute("state", "reopened");
+          return;
+        }
+
+        log("Attempting to load/connect regular booking link");
+        // Immediately take it to loading state. Either through connect or through loadInIframe, it would later be updated
+        existingModalEl.setAttribute("state", "loading");
+
+        if (actionToTake === "fullReload") {
+          log("Initiating full page load");
+          this.cal.loadInIframe({
+            calLink,
+            calOrigin,
+            iframe: this.cal.iframe,
+            config: enrichedConfig,
+          });
+          // Send reloadInitiated message to iframe so it can track it
+          // Send it after loadInIframe so that new iframe can process it. 
+          this.cal.doInIframe({ method: "__reloadInitiated", arg: {} });
+        } else if (actionToTake === "connect" || actionToTake === "connect-no-slots-fetch") {
+          const paramsToAdd = fromEntriesWithDuplicateKeys(calLinkUrlObject.searchParams.entries());
+          this.cal.connect({
+            config: {
+              ...enrichedConfig,
+              ...(actionToTake === "connect-no-slots-fetch"
+                ? {
+                  "cal.embed.noSlotsFetchOnConnect": "true",
+                }
+                : {}),
+            },
+            params: paramsToAdd,
+          });
+        }
+      }
+
+      // We reach here in case of connect or fullReload
+      this.modalUid = uid;
+      return;
+    }
+
+    log(`Creating new modal ${uid}`);
+
+    if (isPrerendering) {
+      this.prerenderedModalUid = uid;
+    } else {
+      // Intentionally not setting it to avoid the behaviour of reusing the same modal. It was disabled earlier but now can be enabled but we will enable it later.
+      // this.modalUid = uid;
+    }
+
     let iframe = null;
 
     if (!iframe) {
       iframe = this.cal.createIframe({
         calLink,
-        queryObject,
-        calOrigin: calOrigin || null,
+        config: enrichedConfig,
+        calOrigin,
       });
     }
 
@@ -648,14 +1234,31 @@ class CalApi {
     iframe.style.height = "100%";
     iframe.style.width = "100%";
     const template = document.createElement("template");
-    template.innerHTML = `<cal-modal-box uid="${uid}"></cal-modal-box>`;
+    const pageType = getConfigProp(enrichedConfig, "cal.embed.pageType");
+    const theme = getConfigProp(enrichedConfig, "theme");
+    const layout = getConfigProp(enrichedConfig, "layout");
+
+    template.innerHTML = `<cal-modal-box 
+      ${generateDataAttributes({
+      pageType,
+      theme,
+      layout,
+    })}
+      uid="${uid}">
+    </cal-modal-box>`;
     this.cal.modalBox = template.content.children[0];
     this.cal.modalBox.appendChild(iframe);
-    if (__prerender) {
+    // Set state through setAttribute so that onAttributeChangedCallback is triggered
+    this.cal.modalBox.setAttribute("state", "loading");
+
+    if (isPrerendering) {
       this.cal.modalBox.setAttribute("state", "prerendering");
     }
     this.handleClose();
     containerEl.appendChild(template.content);
+    return {
+      status: "created",
+    };
   }
 
   private handleClose() {
@@ -698,6 +1301,32 @@ class CalApi {
   }) {
     this.cal.actionManager.off(action, callback);
   }
+
+  /**
+   * Closes modal-based embeds programmatically.
+   * 
+   * @throws {Error} If called on an inline embed (only works for modal-based embeds)
+   * 
+   * @example
+   * ```javascript
+   * // Close the modal after a successful booking
+   * cal("on", {
+   *   action: "bookingSuccessful",
+   *   callback: () => {
+   *     cal("closeModal");
+   *   }
+   * });
+   * ```
+   */
+  closeModal() {
+    if (this.cal.inlineEl && !this.cal.modalBox) {
+      throw new Error(
+        "closeModal() is only supported for modal-based embeds (ModalBox and FloatingButton). It cannot be used with inline embeds."
+      );
+    }
+    this.cal.actionManager.fire("__closeIframe", {});
+  }
+
   /**
    *
    * type is provided and prerenderIframe not set. We would assume prerenderIframe to be true
@@ -709,12 +1338,18 @@ class CalApi {
     calLink,
     type,
     options = {},
+    pageType,
+    calOrigin,
   }: {
     calLink: string;
     type?: "modal" | "floatingButton";
     options?: {
       prerenderIframe?: boolean;
+      slotsStaleTimeMs?: number;
+      iframeForceReloadThresholdMs?: number;
     };
+    pageType?: EmbedPageType;
+    calOrigin?: string;
   }) {
     // eslint-disable-next-line prefer-rest-params
     validate(arguments[0], {
@@ -744,8 +1379,9 @@ class CalApi {
       throw new Error(`Namespace ${namespace} isn't defined`);
     }
 
-    const config = this.cal.getConfig();
-    let prerenderIframe = options.prerenderIframe;
+    const config = this.cal.getCalConfig();
+    const { prerenderIframe: prerenderIframeOption, ...prerenderOptions } = options;
+    let prerenderIframe = prerenderIframeOption;
     if (type && prerenderIframe === undefined) {
       prerenderIframe = true;
     }
@@ -756,11 +1392,13 @@ class CalApi {
 
     if (prerenderIframe) {
       if (type === "modal" || type === "floatingButton") {
-        this.cal.isPerendering = true;
+        this.cal.isPrerendering = true;
         this.modal({
           calLink,
-          calOrigin: config.calOrigin,
+          calOrigin: calOrigin || config.calOrigin,
           __prerender: true,
+          prerenderOptions,
+          ...(pageType ? { config: { "cal.embed.pageType": pageType } } : {}),
         });
       } else {
         console.warn("Ignoring - full preload for inline embed and instead preloading assets only");
@@ -771,10 +1409,67 @@ class CalApi {
     }
   }
 
-  prerender({ calLink, type }: { calLink: string; type: "modal" | "floatingButton" }) {
+  /**
+   * Usecase - Prerender headless router path(i.e. `/router?form={FORM_ID}&param1=value1&......`)
+   *
+   * - Loads the headless router path in iframe hidden behind the scenes
+   * - Stores the response in a temporary queue at backend.
+   * - Redirects to appropriate booking page based on the Routing Rules
+   * - Loads the availability as per the team members identified by Routing - Attribute Rules
+   * - At this point, the booking page is ready to be used but is hidden behind the scenes
+   *
+   * A call to `modal` instruction(which automatically happens when an element with `data-cal-link` attribute is clicked) would then show this prerendered booking page sending a request `queued-response` that records the field values now as a response and connect it to the queued-response
+   */
+  prerender({
+    calLink,
+    type,
+    pageType,
+    calOrigin,
+    options = {},
+  }: {
+    calLink: string;
+    type: "modal" | "floatingButton";
+    pageType?: EmbedPageType;
+    calOrigin?: string;
+    options?: {
+      /**
+       * Time in milliseconds after which the prerendered slots/availability should be considered stale and would be requested again when the modal is opened.
+       *
+       * The threshold is measured from the time of the last prerender or modal API call (not from when the embed was first opened).
+       * **Important**: Each time the modal is opened, the timer resets. This means if you frequently close and reopen the modal
+       * (before the threshold is crossed), the slots will never be considered stale.
+       *
+       * When slots are considered stale, only the availability/slots are refetched (not a full iframe reload), which could
+       * slow down the booking page load by the time taken by the slots loading request.
+       *
+       * Default value is 1 min (60000 ms)
+       */
+      slotsStaleTimeMs?: number;
+      /**
+       * Time in milliseconds after which the iframe would be forcefully reloaded when the modal is opened.
+       *
+       * The threshold is measured from the time of the last prerender or modal API call (not from when the embed was first opened).
+       * **Important**: Each time the modal is opened, the timer resets. This means if you frequently close and reopen the modal
+       * (before the threshold is crossed), the iframe will never be forcefully reloaded.
+       *
+       * When this threshold is crossed, a full iframe reload occurs (not just a slots refetch), which causes the booking page
+       * load to slow down drastically, showing the skeleton loader in the meantime. This full reload also means that any form
+       * response data would be resubmitted.
+       *
+       * To avoid reaching this threshold, you could prerender again before this time is reached in usecases where prerender
+       * has been done a long time ago.
+       *
+       * Default value is 15 mins (900000 ms)
+       */
+      iframeForceReloadThresholdMs?: number;
+    };
+  }) {
     this.preload({
       calLink,
       type,
+      pageType,
+      calOrigin,
+      options,
     });
   }
 
@@ -797,12 +1492,21 @@ class CalApi {
   }
 }
 
+function getQueryParamsFromPage() {
+  const params = new URLSearchParams(window.location.search);
+  return fromEntriesWithDuplicateKeys(params.entries());
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Queue = any[];
+type GlobalConfig = {
+  forwardQueryParams?: boolean;
+};
 
+type KeyOfSingleInstructionMap = keyof SingleInstructionMap;
 // This is a full fledged Cal instance but doesn't have ns property because it would be nested inside an ns instance already
 export interface GlobalCalWithoutNs {
-  <T extends keyof SingleInstructionMap>(methodName: T, ...arg: Rest<SingleInstructionMap[T]>): void;
+  <T extends KeyOfSingleInstructionMap>(methodName: T, ...arg: Rest<SingleInstructionMap[T]>): void;
   /** Marks that the embed.js is loaded. Avoids re-downloading it. */
   loaded?: boolean;
   /** Maintains a queue till the time embed.js isn't loaded */
@@ -813,6 +1517,7 @@ export interface GlobalCalWithoutNs {
   fingerprint?: string;
   version?: string;
   __logQueue?: unknown[];
+  config?: GlobalConfig;
 }
 
 // Well Omit removes the Function Signature from a type if used. So, instead construct the types like this.
@@ -880,7 +1585,7 @@ document.addEventListener("click", (e) => {
   let config;
   try {
     config = JSON.parse(configString);
-  } catch (e) {
+  } catch {
     config = {};
   }
 
@@ -949,7 +1654,7 @@ function getEmbedApiFn(ns: string) {
   return api;
 }
 
-function preloadAssetsForCalLink({ config, calLink }: { config: Config; calLink: string }) {
+function preloadAssetsForCalLink({ config, calLink }: { config: CalConfig; calLink: string }) {
   const iframe = document.body.appendChild(document.createElement("iframe"));
 
   const urlInstance = new URL(`${config.calOrigin}/${calLink}`);
@@ -958,4 +1663,36 @@ function preloadAssetsForCalLink({ config, calLink }: { config: Config; calLink:
   iframe.style.width = "0";
   iframe.style.height = "0";
   iframe.style.display = "none";
+}
+
+function initializeGlobalCalProps() {
+  // Store Commit Hash to know exactly what version of the code is running
+  // TODO: Ideally it should be the version as per package.json and then it can be renamed to version.
+  // But because it is built on local machine right now, it is much more reliable to have the commit hash.
+  globalCal.fingerprint = process.env.EMBED_PUBLIC_EMBED_FINGER_PRINT as string;
+  globalCal.version = process.env.EMBED_PUBLIC_EMBED_VERSION as string;
+  globalCal.__css = tailwindCss;
+
+  if (!globalCal.config) {
+    globalCal.config = {};
+  }
+
+  // This is disabled by default because if we miss any param in reserved list, we might end up breaking embed Booking Form for a lot of users.
+  // Better to be conservative and let the user decide if he wants to forward the params or not.
+  // TODO: Going forward, Booking Form should maintain a list of params used by it and then we can enable this by default after using that list itself as reserved list.
+  // Use if configured by user otherwise set default
+  globalCal.config.forwardQueryParams = globalCal.config.forwardQueryParams ?? false;
+}
+
+function log(...args: unknown[]) {
+  const searchString = location.search;
+  globalCal.__logQueue = globalCal.__logQueue || [];
+  globalCal.__logQueue.push(args);
+  if (searchString.includes("cal.embed.logging=1") || process.env.INTEGRATION_TEST_MODE === "true") {
+    console.log("Parent:", ...args);
+  }
+}
+
+function error(...args: unknown[]) {
+  console.error(...args);
 }

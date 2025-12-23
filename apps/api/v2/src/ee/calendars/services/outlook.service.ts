@@ -1,4 +1,5 @@
 import { OAuthCalendarApp } from "@/ee/calendars/calendars.interface";
+import { CalendarState } from "@/ee/calendars/controllers/calendars.controller";
 import { CalendarsService } from "@/ee/calendars/services/calendars.service";
 import { CredentialsRepository } from "@/modules/credentials/credentials.repository";
 import { SelectedCalendarsRepository } from "@/modules/selected-calendars/selected-calendars.repository";
@@ -33,25 +34,39 @@ export class OutlookService implements OAuthCalendarApp {
   async connect(
     authorization: string,
     req: Request,
-    redir?: string
+    redir?: string,
+    isDryRun?: boolean
   ): Promise<{ status: typeof SUCCESS_STATUS; data: { authUrl: string } }> {
     const accessToken = authorization.replace("Bearer ", "");
     const origin = req.get("origin") ?? req.get("host");
-    const redirectUrl = await await this.getCalendarRedirectUrl(accessToken, origin ?? "", redir);
+    const redirectUrl = await this.getCalendarRedirectUrl(accessToken, origin ?? "", redir, isDryRun);
 
     return { status: SUCCESS_STATUS, data: { authUrl: redirectUrl } };
   }
 
-  async save(code: string, accessToken: string, origin: string, redir?: string): Promise<{ url: string }> {
-    return await this.saveCalendarCredentialsAndRedirect(code, accessToken, origin, redir);
+  async save(
+    code: string,
+    accessToken: string,
+    origin: string,
+    redir?: string,
+    isDryRun?: boolean
+  ): Promise<{ url: string }> {
+    return await this.saveCalendarCredentialsAndRedirect(code, accessToken, origin, redir, isDryRun);
   }
 
   async check(userId: number): Promise<{ status: typeof SUCCESS_STATUS }> {
     return await this.checkIfCalendarConnected(userId);
   }
 
-  async getCalendarRedirectUrl(accessToken: string, origin: string, redir?: string) {
+  async getCalendarRedirectUrl(accessToken: string, origin: string, redir?: string, isDryRun?: boolean) {
     const { client_id } = await this.calendarsService.getAppKeys(OFFICE_365_CALENDAR_ID);
+
+    const state: CalendarState = {
+      accessToken,
+      origin,
+      redir,
+      isDryRun,
+    };
 
     const scopes = ["User.Read", "Calendars.Read", "Calendars.ReadWrite", "offline_access"];
     const params = {
@@ -60,7 +75,7 @@ export class OutlookService implements OAuthCalendarApp {
       client_id,
       prompt: "select_account",
       redirect_uri: this.redirectUri,
-      state: `accessToken=${accessToken}&origin=${origin}&redir=${redir ?? ""}`,
+      state: JSON.stringify(state),
     };
 
     const query = stringify(params);
@@ -71,7 +86,7 @@ export class OutlookService implements OAuthCalendarApp {
   }
 
   async checkIfCalendarConnected(userId: number): Promise<{ status: typeof SUCCESS_STATUS }> {
-    const office365CalendarCredentials = await this.credentialRepository.getByTypeAndUserId(
+    const office365CalendarCredentials = await this.credentialRepository.findCredentialByTypeAndUserId(
       "office365_calendar",
       userId
     );
@@ -148,10 +163,16 @@ export class OutlookService implements OAuthCalendarApp {
     code: string,
     accessToken: string,
     origin: string,
-    redir?: string
+    redir?: string,
+    isDryRun?: boolean
   ) {
     // if code is not defined, user denied to authorize office 365 app, just redirect straight away
-    if (!code) {
+    if (!code || code === "undefined") {
+      return { url: redir || origin };
+    }
+
+    // if isDryRun is true we know its a dry run so we just redirect straight away
+    if (isDryRun) {
       return { url: redir || origin };
     }
 
@@ -168,16 +189,39 @@ export class OutlookService implements OAuthCalendarApp {
     const defaultCalendar = await this.getDefaultCalendar(office365OAuthCredentials.access_token);
 
     if (defaultCalendar?.id) {
-      const credential = await this.credentialRepository.createAppCredential(
+      const alreadyExistingSelectedCalendar = await this.selectedCalendarsRepository.getUserSelectedCalendar(
+        ownerId,
         OFFICE_365_CALENDAR_TYPE,
-        office365OAuthCredentials,
-        ownerId
+        defaultCalendar.id
       );
 
-      await this.selectedCalendarsRepository.createSelectedCalendar(
-        defaultCalendar.id,
-        credential.id,
+      if (alreadyExistingSelectedCalendar) {
+        const isCredentialValid = await this.calendarsService.checkCalendarCredentialValidity(
+          ownerId,
+          alreadyExistingSelectedCalendar.credentialId ?? 0,
+          OFFICE_365_CALENDAR_TYPE
+        );
+
+        // user credential probably got expired in this case
+        if (!isCredentialValid) {
+          await this.calendarsService.createAndLinkCalendarEntry(
+            ownerId,
+            alreadyExistingSelectedCalendar.externalId,
+            office365OAuthCredentials,
+            OFFICE_365_CALENDAR_TYPE,
+            alreadyExistingSelectedCalendar.credentialId
+          );
+        }
+
+        return {
+          url: redir || origin,
+        };
+      }
+
+      await this.calendarsService.createAndLinkCalendarEntry(
         ownerId,
+        defaultCalendar.id,
+        office365OAuthCredentials,
         OFFICE_365_CALENDAR_TYPE
       );
     }

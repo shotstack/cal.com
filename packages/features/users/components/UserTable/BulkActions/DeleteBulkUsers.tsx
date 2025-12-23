@@ -1,11 +1,14 @@
+import { Dialog } from "@calcom/features/components/controlled-dialog";
+import { DataTableSelectionBar } from "@calcom/features/data-table";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import { Button, ConfirmationDialogContent, Dialog, DialogTrigger, showToast } from "@calcom/ui";
+import { DialogTrigger, ConfirmationDialogContent } from "@calcom/ui/components/dialog";
+import { showToast } from "@calcom/ui/components/toast";
 
-import type { User } from "../UserListTable";
+import type { UserTableUser } from "../types";
 
 interface Props {
-  users: User[];
+  users: Array<{ id: UserTableUser["id"] }>;
   onRemove: () => void;
 }
 
@@ -15,8 +18,8 @@ export function DeleteBulkUsers({ users, onRemove }: Props) {
   const utils = trpc.useUtils();
   const deleteMutation = trpc.viewer.organizations.bulkDeleteUsers.useMutation({
     onSuccess: () => {
-      utils.viewer.organizations.listMembers.invalidate();
       showToast("Deleted Users", "success");
+      utils.viewer.organizations.listMembers.invalidate();
     },
     onError: (error) => {
       showToast(error.message, "error");
@@ -25,7 +28,9 @@ export function DeleteBulkUsers({ users, onRemove }: Props) {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button StartIcon="ban">{t("Delete")}</Button>
+        <DataTableSelectionBar.Button icon="ban" color="destructive">
+          {t("Delete")}
+        </DataTableSelectionBar.Button>
       </DialogTrigger>
       <ConfirmationDialogContent
         variety="danger"

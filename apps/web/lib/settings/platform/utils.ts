@@ -1,4 +1,4 @@
-import type { IconName } from "@calcom/ui";
+import type { IconName } from "@calcom/ui/components/icon";
 
 type IndividualPlatformPlan = {
   plan: string;
@@ -21,12 +21,13 @@ type HelpCardInfo = {
 // if pricing or plans change in future modify this
 export const platformPlans: IndividualPlatformPlan[] = [
   {
-    plan: "Starter",
+    plan: "Free",
     description:
-      "Perfect for just getting started with community support and access to hosted platform APIs, Cal.com Atoms (React components) and more.",
-    pricing: 99,
+      "The best plan to dip your toes into scheduling infrastructure. Start immediately with 25 free meetings per month",
+    pricing: 0,
     includes: [
-      "Up to 100 bookings a month",
+      "Up to 25 bookings a month",
+      "$0.99 overage beyond",
       "Community Support",
       "Cal Atoms (React Library)",
       "Platform APIs",
@@ -101,6 +102,17 @@ export const helpCards: HelpCardInfo[] = [
     actionButton: {
       href: "https://i.cal.com/platform",
       child: "Schedule a call",
+    },
+  },
+  {
+    icon: "triangle-alert",
+    title: "Report issue",
+    description:
+      "You can submit a ticket on GitHub or upgrade your plan to receive real-time support with developer conferences",
+    variant: "basic",
+    actionButton: {
+      href: "https://github.com/calcom/cal.com/issues/new?template=platform.md",
+      child: "Open Issue",
     },
   },
 ];

@@ -5,7 +5,7 @@ import { parse } from "node-html-parser";
 
 import { getOrgFullOrigin } from "@calcom/features/ee/organizations/lib/orgDomains";
 import { EMBED_LIB_URL, WEBAPP_URL } from "@calcom/lib/constants";
-import { MembershipRole } from "@calcom/prisma/client";
+import { MembershipRole } from "@calcom/prisma/enums";
 
 import { test } from "./lib/fixtures";
 
@@ -60,11 +60,10 @@ test.describe("Embed Code Generator Tests", () => {
         });
 
         // To prevent early timeouts
-        // eslint-disable-next-line playwright/no-wait-for-timeout
         await page.waitForTimeout(1000);
         await expectToContainValidPreviewIframe(page, {
           embedType: "inline",
-          calLink: `${pro.username}/30-min`,
+          calLink: `${pro.username}/multiple-duration`,
         });
       });
 
@@ -98,11 +97,10 @@ test.describe("Embed Code Generator Tests", () => {
         });
 
         // To prevent early timeouts
-        // eslint-disable-next-line playwright/no-wait-for-timeout
         await page.waitForTimeout(1000);
         await expectToContainValidPreviewIframe(page, {
           embedType: "floating-popup",
-          calLink: `${pro.username}/30-min`,
+          calLink: `${pro.username}/multiple-duration`,
         });
       });
 
@@ -136,11 +134,10 @@ test.describe("Embed Code Generator Tests", () => {
         });
 
         // To prevent early timeouts
-        // eslint-disable-next-line playwright/no-wait-for-timeout
         await page.waitForTimeout(1000);
         await expectToContainValidPreviewIframe(page, {
           embedType: "element-click",
-          calLink: `${pro.username}/30-min`,
+          calLink: `${pro.username}/multiple-duration`,
         });
       });
     });
@@ -176,7 +173,6 @@ test.describe("Embed Code Generator Tests", () => {
         });
 
         // To prevent early timeouts
-        // eslint-disable-next-line playwright/no-wait-for-timeout
         await page.waitForTimeout(1000);
         await expectToContainValidPreviewIframe(page, {
           embedType: "inline",
@@ -234,11 +230,10 @@ test.describe("Embed Code Generator Tests", () => {
         });
 
         // To prevent early timeouts
-        // eslint-disable-next-line playwright/no-wait-for-timeout
         await page.waitForTimeout(1000);
         await expectToContainValidPreviewIframe(page, {
           embedType: "inline",
-          calLink: `${user.username}/30-min`,
+          calLink: `${user.username}/multiple-duration`,
           bookerUrl: getOrgFullOrigin(org?.slug ?? ""),
         });
       });
@@ -275,11 +270,10 @@ test.describe("Embed Code Generator Tests", () => {
         });
 
         // To prevent early timeouts
-        // eslint-disable-next-line playwright/no-wait-for-timeout
         await page.waitForTimeout(1000);
         await expectToContainValidPreviewIframe(page, {
           embedType: "floating-popup",
-          calLink: `${user.username}/30-min`,
+          calLink: `${user.username}/multiple-duration`,
           bookerUrl: getOrgFullOrigin(org?.slug ?? ""),
         });
       });
@@ -315,11 +309,10 @@ test.describe("Embed Code Generator Tests", () => {
         });
 
         // To prevent early timeouts
-        // eslint-disable-next-line playwright/no-wait-for-timeout
         await page.waitForTimeout(1000);
         await expectToContainValidPreviewIframe(page, {
           embedType: "element-click",
-          calLink: `${user.username}/30-min`,
+          calLink: `${user.username}/multiple-duration`,
           bookerUrl: getOrgFullOrigin(org?.slug ?? ""),
         });
       });
@@ -333,17 +326,16 @@ function chooseEmbedType(page: Page, embedType: EmbedType) {
 }
 
 async function goToReactCodeTab(page: Page) {
-  // To prevent early timeouts
-  // eslint-disable-next-line playwright/no-wait-for-timeout
+  // To prevent early timeo
   await page.waitForTimeout(1000);
-  await page.locator("[data-testid=horizontal-tab-React]").click();
+  await page.locator("[data-testid=horizontal-tab-react]").click();
 }
 
 async function clickEmbedButton(page: Page) {
   const embedButton = page.locator("[data-testid=embed]");
   const embedUrl = await embedButton.getAttribute("data-test-embed-url");
   embedButton.click();
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+
   return embedUrl!;
 }
 
@@ -439,18 +431,24 @@ async function expectValidHtmlEmbedSnippet(
 }
 
 function assertThatCodeIsValidVanillaJsCode(code: string) {
-  const lintResult = linter.verify(code, {
-    env: {
-      browser: true,
+  const lintResult = linter.verify(code, [
+    {
+      languageOptions: {
+        ecmaVersion: 2021,
+        sourceType: "module",
+        parserOptions: { ecmaFeatures: { jsx: true } },
+        globals: {
+          window: "readonly",
+          document: "readonly",
+          navigator: "readonly",
+          Cal: "readonly",
+          console: "readonly",
+        },
+      },
+      rules: eslintRules,
     },
-    parserOptions: {
-      ecmaVersion: 2021,
-    },
-    globals: {
-      Cal: "readonly",
-    },
-    rules: eslintRules,
-  });
+  ]);
+
   if (lintResult.length) {
     console.log(
       JSON.stringify({
@@ -459,23 +457,35 @@ function assertThatCodeIsValidVanillaJsCode(code: string) {
       })
     );
   }
+
   expect(lintResult.length).toBe(0);
 }
 
 function assertThatCodeIsValidReactCode(code: string) {
-  const lintResult = linter.verify(code, {
-    env: {
-      browser: true,
-    },
-    parserOptions: {
-      ecmaVersion: 2021,
-      ecmaFeatures: {
-        jsx: true,
+  const lintResult = linter.verify(code, [
+    {
+      languageOptions: {
+        ecmaVersion: 2021,
+        sourceType: "module",
+        parserOptions: {
+          ecmaFeatures: { jsx: true },
+        },
+        globals: {
+          window: "readonly",
+          document: "readonly",
+          navigator: "readonly",
+          console: "readonly",
+        },
       },
-      sourceType: "module",
+      rules: {
+        ...eslintRules,
+        "@typescript-eslint/no-unused-vars": "off",
+        "no-undef": "off",
+        semi: "off",
+      },
     },
-    rules: eslintRules,
-  });
+  ]);
+
   if (lintResult.length) {
     console.log(
       JSON.stringify({
@@ -484,6 +494,7 @@ function assertThatCodeIsValidReactCode(code: string) {
       })
     );
   }
+
   expect(lintResult.length).toBe(0);
 }
 

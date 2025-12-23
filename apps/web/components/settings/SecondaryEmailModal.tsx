@@ -3,17 +3,12 @@ import { useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { Dialog } from "@calcom/features/components/controlled-dialog";
+import { emailSchema } from "@calcom/lib/emailSchema";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogClose,
-  Button,
-  TextField,
-  Form,
-  InputError,
-} from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { DialogContent, DialogFooter, DialogClose } from "@calcom/ui/components/dialog";
+import { Form, TextField, InputError } from "@calcom/ui/components/form";
 
 interface SecondaryEmailModalProps {
   isLoading: boolean;
@@ -37,7 +32,7 @@ const SecondaryEmailModal = ({
   const formMethods = useForm<FormValues>({
     resolver: zodResolver(
       z.object({
-        email: z.string().email(),
+        email: emailSchema,
       })
     ),
   });
@@ -56,6 +51,7 @@ const SecondaryEmailModal = ({
         type="creation"
         data-testid="secondary-email-add-dialog">
         <Form form={formMethods} handleSubmit={handleAddEmail}>
+          <div className="text-subtle mb-4 text-sm">{t("change_email_hint")}</div>
           <TextField
             label={t("email_address")}
             data-testid="secondary-email-input"

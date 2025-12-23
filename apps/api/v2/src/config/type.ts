@@ -13,6 +13,10 @@ export type AppConfig = {
   db: {
     readUrl: string;
     writeUrl: string;
+    readPoolMax: number;
+    writePoolMax: number;
+    workerReadPoolMax: number;
+    workerWritePoolMax: number;
     redisUrl: string;
   };
   next: {
@@ -21,6 +25,8 @@ export type AppConfig = {
   stripe: {
     apiKey: string;
     webhookSecret: string;
+    teamMonthlyPriceId: string;
+    isTeamBillingEnabled: boolean;
   };
   app: {
     baseUrl: string;

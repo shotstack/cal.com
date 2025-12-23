@@ -1,20 +1,29 @@
-import { Prisma } from "@calcom/prisma/client";
+import type { Prisma } from "@calcom/prisma/client";
 
-export const eventTypeSelect = Prisma.validator<Prisma.EventTypeSelect>()({
+export const eventTypeSelect = {
   id: true,
   teamId: true,
   schedulingType: true,
   userId: true,
   metadata: true,
   description: true,
+  interfaceLanguage: true,
   hidden: true,
   slug: true,
   length: true,
   title: true,
   requiresConfirmation: true,
+  canSendCalVideoTranscriptionEmails: true,
+  requiresConfirmationForFreeEmail: true,
   requiresConfirmationWillBlockSlot: true,
+  autoTranslateDescriptionEnabled: true,
   position: true,
   offsetStart: true,
+  owner: {
+    select: {
+      timeZone: true,
+    },
+  },
   profileId: true,
   eventName: true,
   parentId: true,
@@ -25,14 +34,22 @@ export const eventTypeSelect = Prisma.validator<Prisma.EventTypeSelect>()({
   periodDays: true,
   periodCountCalendarDays: true,
   lockTimeZoneToggleOnBookingPage: true,
+  lockedTimeZone: true,
   requiresBookerEmailVerification: true,
   disableGuests: true,
+  disableCancelling: true,
+  disableRescheduling: true,
+  minimumRescheduleNotice: true,
+  allowReschedulingCancelledBookings: true,
   hideCalendarNotes: true,
   minimumBookingNotice: true,
   beforeEventBuffer: true,
   afterEventBuffer: true,
   seatsPerTimeSlot: true,
   onlyShowFirstAvailableSlot: true,
+  allowReschedulingPastBookings: true,
+  hideOrganizerEmail: true,
+  showOptimizedSlots: true,
   seatsShowAttendees: true,
   seatsShowAvailabilityCount: true,
   scheduleId: true,
@@ -43,6 +60,7 @@ export const eventTypeSelect = Prisma.validator<Prisma.EventTypeSelect>()({
   successRedirectUrl: true,
   isInstantEvent: true,
   instantMeetingExpiryTimeOffsetInSeconds: true,
+  instantMeetingParameters: true,
   aiPhoneCallConfig: true,
   assignAllTeamMembers: true,
   isRRWeightsEnabled: true,
@@ -55,4 +73,35 @@ export const eventTypeSelect = Prisma.validator<Prisma.EventTypeSelect>()({
   bookingLimits: true,
   durationLimits: true,
   eventTypeColor: true,
-});
+  hideCalendarEventDetails: true,
+  rrSegmentQueryValue: true,
+  assignRRMembersUsingSegment: true,
+  maxLeadThreshold: true,
+  useEventLevelSelectedCalendars: true,
+  customReplyToEmail: true,
+  restrictionScheduleId: true,
+  useBookerTimezone: true,
+  instantMeetingSchedule: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+} satisfies Prisma.EventTypeSelect;
+
+// Create a separate select for schedule-related fields
+export const eventTypeScheduleSelect = {
+  ...eventTypeSelect,
+  schedule: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+  restrictionSchedule: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+} satisfies Prisma.EventTypeSelect;

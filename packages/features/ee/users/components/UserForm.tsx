@@ -1,26 +1,35 @@
-// eslint-disable-next-line no-restricted-imports
 import { noop } from "lodash";
 import { Controller, useForm } from "react-hook-form";
 
+import { TimezoneSelect } from "@calcom/features/components/timezone-select";
+import { formatToLocalizedDate } from "@calcom/lib/dayjs";
 import { getUserAvatarUrl } from "@calcom/lib/getAvatarUrl";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { defaultLocaleOption, localeOptions } from "@calcom/lib/i18n";
 import { nameOfDay } from "@calcom/lib/weekday";
-import {
-  Avatar,
-  Button,
-  EmailField,
-  Form,
-  ImageUploader,
-  Label,
-  Select,
-  TextField,
-  TimezoneSelect,
-} from "@calcom/ui";
+import { Avatar } from "@calcom/ui/components/avatar";
+import { Button } from "@calcom/ui/components/button";
+import { Form, EmailField, Select, Label, TextField } from "@calcom/ui/components/form";
+import { ImageUploader } from "@calcom/ui/components/image-uploader";
 
-import type { UserAdminRouterOutputs } from "../server/trpc-router";
-
-type User = UserAdminRouterOutputs["get"]["user"];
+interface User {
+  id: number;
+  name: string | null;
+  email: string;
+  username: string | null;
+  bio: string | null;
+  timeZone: string;
+  weekStart: string;
+  theme: string | null;
+  defaultScheduleId: number | null;
+  locale: string | null;
+  timeFormat: number | null;
+  allowDynamicBooking: boolean | null;
+  identityProvider: string | null;
+  role: string | null;
+  avatarUrl: string | null;
+  createdDate?: string | Date;
+}
 
 type Option<T extends string | number = string> = {
   value: T;
@@ -36,7 +45,19 @@ type OptionValues = {
   identityProvider: Option;
 };
 
-type FormValues = Pick<User, "avatarUrl" | "name" | "username" | "email" | "bio"> & OptionValues;
+type FormValues = Pick<
+  User,
+  | "avatarUrl"
+  | "name"
+  | "username"
+  | "email"
+  | "bio"
+  | "createdDate"
+  | "theme"
+  | "defaultScheduleId"
+  | "allowDynamicBooking"
+> &
+  OptionValues;
 
 export const UserForm = ({
   defaultValues,
@@ -80,11 +101,14 @@ export const UserForm = ({
 
   const form = useForm<FormValues>({
     defaultValues: {
-      avatarUrl: defaultValues?.avatarUrl,
+      avatarUrl: defaultValues?.avatarUrl || null,
       name: defaultValues?.name,
       username: defaultValues?.username,
       email: defaultValues?.email,
       bio: defaultValues?.bio,
+      theme: defaultValues?.theme || null,
+      defaultScheduleId: defaultValues?.defaultScheduleId || null,
+      allowDynamicBooking: defaultValues?.allowDynamicBooking ?? true,
       locale: {
         value: defaultLocale,
         label: new Intl.DisplayNames(defaultLocale, { type: "language" }).of(defaultLocale) || "",
@@ -116,7 +140,7 @@ export const UserForm = ({
   });
 
   return (
-    <Form form={form} className="space-y-4" handleSubmit={onSubmit}>
+    <Form form={form} className="stack-y-4" handleSubmit={onSubmit}>
       <div className="flex items-center">
         <Controller
           control={form.control}
@@ -145,6 +169,14 @@ export const UserForm = ({
           )}
         />
       </div>
+      {defaultValues?.createdDate && (
+        <div>
+          <Label className="text-default font-medium">{t("member_since")}</Label>
+          <div className="text-default mt-1 text-sm">
+            {formatToLocalizedDate(new Date(defaultValues.createdDate), localeProp)}
+          </div>
+        </div>
+      )}
       <Controller
         name="role"
         control={form.control}

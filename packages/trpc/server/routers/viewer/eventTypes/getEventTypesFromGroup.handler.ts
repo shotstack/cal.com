@@ -1,12 +1,16 @@
+import { EventTypeRepository } from "@calcom/features/eventtypes/repositories/eventTypeRepository";
 import { hasFilter } from "@calcom/features/filters/lib/hasFilter";
 import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
-import { EventTypeRepository } from "@calcom/lib/server/repository/eventType";
+import logger from "@calcom/lib/logger";
+import { prisma } from "@calcom/prisma";
 import type { PrismaClient } from "@calcom/prisma";
-import { SchedulingType } from "@calcom/prisma/enums";
+import type { Prisma } from "@calcom/prisma/client";
 
-import type { TrpcSessionUser } from "../../../trpc";
+import type { TrpcSessionUser } from "../../../types";
 import type { TGetEventTypesFromGroupSchema } from "./getByViewer.schema";
 import { mapEventType } from "./util";
+
+const log = logger.getSubLogger({ prefix: ["getEventTypesFromGroup"] });
 
 type GetByViewerOptions = {
   ctx: {
@@ -16,16 +20,23 @@ type GetByViewerOptions = {
   input: TGetEventTypesFromGroupSchema;
 };
 
-type EventType = Awaited<ReturnType<typeof EventTypeRepository.findAllByUpId>>[number];
+type EventType = Awaited<ReturnType<EventTypeRepository["findAllByUpId"]>>[number];
+type MappedEventType = Awaited<ReturnType<typeof mapEventType>>;
 
-export const getEventTypesFromGroup = async ({ ctx, input }: GetByViewerOptions) => {
+export const getEventTypesFromGroup = async ({
+  ctx,
+  input,
+}: GetByViewerOptions): Promise<{
+  eventTypes: MappedEventType[];
+  nextCursor: number | null | undefined;
+}> => {
   await checkRateLimitAndThrowError({
     identifier: `eventTypes:getEventTypesFromGroup:${ctx.user.id}`,
     rateLimitingType: "common",
   });
 
   const userProfile = ctx.user.profile;
-  const { group, limit, cursor, filters } = input;
+  const { group, limit, cursor, filters, searchQuery } = input;
   const { teamId, parentId } = group;
 
   const isFilterSet = (filters && hasFilter(filters)) || !!teamId;
@@ -35,37 +46,78 @@ export const getEventTypesFromGroup = async ({ ctx, input }: GetByViewerOptions)
     !isFilterSet || isUpIdInFilter || (isFilterSet && filters?.upIds && !isUpIdInFilter);
 
   const eventTypes: EventType[] = [];
+  const eventTypeRepo = new EventTypeRepository(ctx.prisma);
 
   if (shouldListUserEvents || !teamId) {
-    const userEventTypes =
-      (await EventTypeRepository.findAllByUpId(
+    const baseQueryConditions = {
+      teamId: null,
+      schedulingType: null,
+      ...(searchQuery ? { title: { contains: searchQuery, mode: "insensitive" as Prisma.QueryMode } } : {}),
+    };
+
+    const [nonChildEventTypes, childEventTypes] = await Promise.all([
+      eventTypeRepo.findAllByUpId(
         {
           upId: userProfile.upId,
           userId: ctx.user.id,
         },
         {
           where: {
-            teamId: null,
+            ...baseQueryConditions,
+            parentId: null,
           },
           orderBy: [
             {
               position: "desc",
             },
             {
-              id: "asc",
+              id: "desc",
             },
           ],
           limit,
           cursor,
         }
-      )) ?? [];
+      ),
+      eventTypeRepo.findAllByUpId(
+        {
+          upId: userProfile.upId,
+          userId: ctx.user.id,
+        },
+        {
+          where: {
+            ...baseQueryConditions,
+            parentId: { not: null },
+            userId: ctx.user.id,
+          },
+          orderBy: [
+            {
+              position: "desc",
+            },
+            {
+              id: "desc",
+            },
+          ],
+          limit,
+          cursor,
+        }
+      ),
+    ]);
+
+    const userEventTypes = [...(nonChildEventTypes ?? []), ...(childEventTypes ?? [])].sort((a, b) => {
+      // First sort by position in descending order
+      if (a.position !== b.position) {
+        return b.position - a.position;
+      }
+      // Then by id in descending order
+      return b.id - a.id;
+    });
 
     eventTypes.push(...userEventTypes);
   }
 
   if (teamId) {
     const teamEventTypes =
-      (await EventTypeRepository.findTeamEventTypes({
+      (await eventTypeRepo.findTeamEventTypes({
         teamId,
         parentId,
         userId: ctx.user.id,
@@ -77,13 +129,14 @@ export const getEventTypesFromGroup = async ({ ctx, input }: GetByViewerOptions)
                 schedulingType: { in: filters.schedulingTypes },
               }
             : null),
+          ...(searchQuery ? { title: { contains: searchQuery, mode: "insensitive" } } : {}),
         },
         orderBy: [
           {
             position: "desc",
           },
           {
-            id: "asc",
+            id: "desc",
           },
         ],
       })) ?? [];
@@ -91,35 +144,36 @@ export const getEventTypesFromGroup = async ({ ctx, input }: GetByViewerOptions)
     eventTypes.push(...teamEventTypes);
   }
 
-  let nextCursor: typeof cursor | undefined = undefined;
-  if (eventTypes && eventTypes.length > limit) {
+  let nextCursor: number | null | undefined = undefined;
+  if (eventTypes.length > limit) {
     const nextItem = eventTypes.pop();
     nextCursor = nextItem?.id;
   }
 
-  const mappedEventTypes = await Promise.all(eventTypes.map(mapEventType));
+  const mappedEventTypes: MappedEventType[] = await Promise.all(eventTypes.map(mapEventType));
 
-  let filteredEventTypes = mappedEventTypes.filter((eventType) => {
-    const isAChildEvent = eventType.parentId;
-    if (!isAChildEvent) {
-      return true;
-    }
-    // A child event only has one user
-    const childEventAssignee = eventType.users[0];
-    if (!childEventAssignee || childEventAssignee.id != ctx.user.id) {
-      return false;
-    }
-    return true;
+  const membership = await prisma.membership.findFirst({
+    where: {
+      userId: ctx.user.id,
+      teamId: teamId ?? 0,
+      accepted: true,
+      role: "MEMBER",
+    },
+    include: {
+      team: {
+        select: {
+          isPrivate: true,
+        },
+      },
+    },
   });
 
-  if (shouldListUserEvents || !teamId) {
-    filteredEventTypes = filteredEventTypes.filter(
-      (evType) => evType.schedulingType !== SchedulingType.MANAGED
-    );
-  }
+  if (membership && membership.team.isPrivate)
+    mappedEventTypes.forEach((evType) => {
+      evType.users = [];
+      evType.hosts = [];
+      evType.children = [];
+    });
 
-  return {
-    eventTypes: filteredEventTypes || [],
-    nextCursor,
-  };
+  return { eventTypes: mappedEventTypes, nextCursor: nextCursor ?? undefined };
 };

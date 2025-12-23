@@ -1,17 +1,15 @@
 import type { NextPageContext } from "next/types";
 import superjson from "superjson";
 
-import { httpBatchLink } from "../client";
-import { httpLink } from "../client";
-import { loggerLink } from "../client";
-import { splitLink } from "../client";
-import type { CreateTRPCNext } from "../next";
-import { createTRPCNext } from "../next";
+import { httpBatchLink, httpLink, loggerLink, splitLink } from "@trpc/client";
+import type { CreateTRPCNext } from "@trpc/next";
+import { createTRPCNext } from "@trpc/next";
 // ℹ️ Type-only import:
 // https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-8.html#type-only-imports-and-export
-import type { TRPCClientErrorLike } from "../react";
-import type { inferRouterInputs, inferRouterOutputs } from "../server";
-import type { AppRouter } from "../server/routers/_app";
+import type { TRPCClientErrorLike } from "@trpc/react-query";
+import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
+
+import type { AppRouter } from "../types/server/routers/_app";
 import { ENDPOINTS } from "./shared";
 
 type Maybe<T> = T | null | undefined;
@@ -73,7 +71,9 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPC
         // adds pretty logs to your console in development and logs errors in production
         loggerLink({
           enabled: (opts) =>
-            !!process.env.NEXT_PUBLIC_DEBUG || (opts.direction === "down" && opts.result instanceof Error),
+            (typeof process.env.NEXT_PUBLIC_LOGGER_LEVEL === "number" &&
+              process.env.NEXT_PUBLIC_LOGGER_LEVEL >= 0) ||
+            (opts.direction === "down" && opts.result instanceof Error),
         }),
         splitLink({
           // check for context property `skipBatch`

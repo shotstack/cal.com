@@ -1,10 +1,10 @@
-import type { Page } from "@playwright/test";
-import type { Booking, Prisma } from "@prisma/client";
+import type { Page, WorkerInfo } from "@playwright/test";
 import short from "short-uuid";
 import { v5 as uuidv5 } from "uuid";
 
 import _dayjs from "@calcom/dayjs";
 import { prisma } from "@calcom/prisma";
+import type { Booking, Prisma } from "@calcom/prisma/client";
 
 const translator = short();
 
@@ -14,7 +14,7 @@ type BookingFixture = ReturnType<typeof createBookingFixture>;
 const dayjs = (...args: Parameters<typeof _dayjs>) => _dayjs(...args).tz("Europe/London");
 
 // creates a user fixture instance and stores the collection
-export const createBookingsFixture = (page: Page) => {
+export const createBookingsFixture = (page: Page, workerInfo: WorkerInfo) => {
   const store = { bookings: [], page } as { bookings: BookingFixture[]; page: typeof page };
   return {
     create: async (
@@ -40,7 +40,9 @@ export const createBookingsFixture = (page: Page) => {
       endDateParam?: Date
     ) => {
       const startDate = startDateParam || dayjs().add(1, "day").toDate();
-      const seed = `${username}:${dayjs(startDate).utc().format()}:${new Date().getTime()}`;
+      const seed = `${username}:${dayjs(startDate).utc().format()}:${new Date().getTime()}:${
+        workerInfo.workerIndex
+      }:${Math.random()}`;
       const uid = translator.fromUUID(uuidv5(seed, uuidv5.URL));
       const booking = await prisma.booking.create({
         data: {

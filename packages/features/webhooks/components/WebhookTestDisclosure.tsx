@@ -1,10 +1,14 @@
+"use client";
+
 import { useWatch } from "react-hook-form";
 import { ZodError } from "zod";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
 import { ZTestTriggerInputSchema } from "@calcom/trpc/server/routers/viewer/webhook/testTrigger.schema";
-import { Badge, Button, showToast } from "@calcom/ui";
+import { Badge } from "@calcom/ui/components/badge";
+import { Button } from "@calcom/ui/components/button";
+import { showToast } from "@calcom/ui/components/toast";
 
 export default function WebhookTestDisclosure() {
   const [subscriberUrl, webhookSecret]: [string, string] = useWatch({ name: ["subscriberUrl", "secret"] });
@@ -50,7 +54,7 @@ export default function WebhookTestDisclosure() {
           {t("ping_test")}
         </Button>
       </div>
-      <div className="border-subtle space-y-0 rounded-b-lg border border-t-0 px-6 py-8 sm:mx-0">
+      <div className="border-subtle stack-y-0 rounded-b-lg border border-t-0 px-6 py-8 sm:mx-0">
         <div className="border-subtle flex justify-between rounded-t-lg border p-4">
           <div className="flex items-center space-x-1">
             <h3 className="text-emphasis self-center text-sm font-semibold leading-4">
@@ -63,10 +67,14 @@ export default function WebhookTestDisclosure() {
             )}
           </div>
         </div>
-        <div className="bg-muted border-subtle rounded-b-lg border border-t-0 p-4 font-mono text-[13px] leading-4">
+        <div className="bg-cal-muted border-subtle rounded-b-lg border border-t-0 p-4 font-mono text-[13px] leading-4">
           {!mutation.data && <p>{t("no_data_yet")}</p>}
-          {mutation.status === "success" && (
-            <div className="overflow-x-auto">{JSON.stringify(mutation.data, null, 4)}</div>
+          {mutation.status === "success" && mutation.data && (
+            <div className="stack-y-2">
+              <div>
+                <span className="text-subtle">{t("status")}:</span> <span className="text-emphasis">{mutation.data.status}</span>
+              </div>
+            </div>
           )}
         </div>
       </div>

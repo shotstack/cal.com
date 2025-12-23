@@ -1,17 +1,16 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { Prisma } from "@prisma/client";
-import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { z } from "zod";
 
-import { IS_TEAM_BILLING_ENABLED, WEBAPP_URL } from "@calcom/lib/constants";
+import { Dialog } from "@calcom/features/components/controlled-dialog";
+import { trackFormbricksAction } from "@calcom/features/formbricks/formbricks-client";
+import { IS_TEAM_BILLING_ENABLED_CLIENT, WEBAPP_URL } from "@calcom/lib/constants";
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
-import { trackFormbricksAction } from "@calcom/lib/formbricks-client";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { useParamsWithFallback } from "@calcom/lib/hooks/useParamsWithFallback";
 import { md } from "@calcom/lib/markdownIt";
@@ -19,26 +18,20 @@ import { markdownToSafeHTML } from "@calcom/lib/markdownToSafeHTML";
 import objectKeys from "@calcom/lib/objectKeys";
 import slugify from "@calcom/lib/slugify";
 import turndown from "@calcom/lib/turndownService";
+import type { Prisma } from "@calcom/prisma/client";
 import { trpc } from "@calcom/trpc/react";
-import {
-  Avatar,
-  Button,
-  ConfirmationDialogContent,
-  Dialog,
-  DialogTrigger,
-  Editor,
-  Form,
-  ImageUploader,
-  Label,
-  LinkIconButton,
-  Meta,
-  showToast,
-  SkeletonContainer,
-  SkeletonText,
-  TextField,
-} from "@calcom/ui";
+import { Avatar } from "@calcom/ui/components/avatar";
+import { Button, LinkIconButton } from "@calcom/ui/components/button";
+import { DialogTrigger, ConfirmationDialogContent } from "@calcom/ui/components/dialog";
+import { Editor } from "@calcom/ui/components/editor";
+import { Form } from "@calcom/ui/components/form";
+import { Label } from "@calcom/ui/components/form";
+import { TextField } from "@calcom/ui/components/form";
+import { ImageUploader } from "@calcom/ui/components/image-uploader";
+import { SkeletonContainer, SkeletonText } from "@calcom/ui/components/skeleton";
+import { showToast } from "@calcom/ui/components/toast";
+import { revalidateTeamDataCache } from "@calcom/web/app/(booking-page-wrapper)/team/[slug]/[type]/actions";
 
-import { getLayout } from "../../../../settings/layouts/SettingsLayout";
 import { subdomainSuffix } from "../../../organizations/lib/orgDomains";
 
 const regex = new RegExp("^[a-zA-Z0-9-]*$");
@@ -59,7 +52,6 @@ const OtherTeamProfileView = () => {
   const { t } = useLocale();
   const router = useRouter();
   const utils = trpc.useUtils();
-  const session = useSession();
   const [firstRender, setFirstRender] = useState(true);
 
   useLayoutEffect(() => {
@@ -72,6 +64,13 @@ const OtherTeamProfileView = () => {
     },
     async onSuccess() {
       await utils.viewer.teams.get.invalidate();
+      if (team?.slug) {
+        // Org admins editing another team's profile should purge the cached team data
+        revalidateTeamDataCache({
+          teamSlug: team.slug,
+          orgSlug: team.parent?.slug ?? null,
+        });
+      }
       showToast(t("your_team_updated_successfully"), "success");
     },
   });
@@ -131,18 +130,6 @@ const OtherTeamProfileView = () => {
     },
   });
 
-  const removeMemberMutation = trpc.viewer.teams.removeMember.useMutation({
-    async onSuccess() {
-      await utils.viewer.teams.get.invalidate();
-      await utils.viewer.teams.list.invalidate();
-      await utils.viewer.eventTypes.invalidate();
-      showToast(t("success"), "success");
-    },
-    async onError(err) {
-      showToast(err.message, "error");
-    },
-  });
-
   const publishMutation = trpc.viewer.teams.publish.useMutation({
     async onSuccess(data: { url?: string }) {
       if (data.url) {
@@ -158,19 +145,10 @@ const OtherTeamProfileView = () => {
     if (team?.id) deleteTeamMutation.mutate({ teamId: team.id });
   }
 
-  function leaveTeam() {
-    if (team?.id && session.data)
-      removeMemberMutation.mutate({
-        teamIds: [team.id],
-        memberIds: [session.data.user.id],
-      });
-  }
-
   if (!team) return null;
 
   return (
     <>
-      <Meta title={t("profile")} description={t("profile_team_description")} />
       {!isPending ? (
         <>
           {isAdmin ? (
@@ -263,7 +241,7 @@ const OtherTeamProfileView = () => {
               <Button color="primary" className="mt-8" type="submit" loading={mutation.isPending}>
                 {t("update")}
               </Button>
-              {IS_TEAM_BILLING_ENABLED &&
+              {IS_TEAM_BILLING_ENABLED_CLIENT &&
                 team.slug === null &&
                 (team.metadata as Prisma.JsonObject)?.requestedSlug && (
                   <Button
@@ -279,7 +257,7 @@ const OtherTeamProfileView = () => {
             </Form>
           ) : (
             <div className="flex">
-              <div className="flex-grow">
+              <div className="grow">
                 <div>
                   <Label className="text-emphasis">{t("team_name")}</Label>
                   <p className="text-default text-sm">{team?.name}</p>
@@ -288,8 +266,9 @@ const OtherTeamProfileView = () => {
                   <>
                     <Label className="text-emphasis mt-5">{t("about")}</Label>
                     <div
-                      className="  text-subtle break-words text-sm [&_a]:text-blue-500 [&_a]:underline [&_a]:hover:text-blue-600"
-                      dangerouslySetInnerHTML={{ __html: md.render(markdownToSafeHTML(team.bio)) }}
+                      className="  text-subtle wrap-break-word text-sm [&_a]:text-blue-500 [&_a]:underline [&_a]:hover:text-blue-600"
+                      // eslint-disable-next-line react/no-danger
+                      dangerouslySetInnerHTML={{ __html: markdownToSafeHTML(team.bio) }}
                     />
                   </>
                 )}
@@ -368,7 +347,5 @@ const OtherTeamProfileView = () => {
     </>
   );
 };
-
-OtherTeamProfileView.getLayout = getLayout;
 
 export default OtherTeamProfileView;

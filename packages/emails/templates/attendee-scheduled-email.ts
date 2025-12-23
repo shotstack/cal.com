@@ -1,13 +1,13 @@
-// eslint-disable-next-line no-restricted-imports
-import { cloneDeep } from "lodash";
-import type { TFunction } from "next-i18next";
+import type { TFunction } from "i18next";
+import { default as cloneDeep } from "lodash/cloneDeep";
 
 import { getRichDescription } from "@calcom/lib/CalEventParser";
+import { getReplyToHeader } from "@calcom/lib/getReplyToHeader";
 import { TimeFormat } from "@calcom/lib/timeFormat";
 import type { CalendarEvent, Person } from "@calcom/types/Calendar";
 
-import { renderEmail } from "../";
 import generateIcsFile, { GenerateIcsRole } from "../lib/generateIcsFile";
+import renderEmail from "../src/renderEmail";
 import BaseEmail from "./_base-email";
 
 export default class AttendeeScheduledEmail extends BaseEmail {
@@ -35,23 +35,26 @@ export default class AttendeeScheduledEmail extends BaseEmail {
     return {
       icalEvent: generateIcsFile({
         calEvent: this.calEvent,
-        title: this.calEvent.recurringEvent?.count
-          ? this.t("your_event_has_been_scheduled_recurring")
-          : this.t("your_event_has_been_scheduled"),
         role: GenerateIcsRole.ATTENDEE,
-        subtitle: this.t("emailed_you_and_any_other_attendees"),
         status: "CONFIRMED",
       }),
       to: `${this.attendee.name} <${this.attendee.email}>`,
       from: `${this.calEvent.organizer.name} <${this.getMailerOptions().from}>`,
-      replyTo: [...this.calEvent.attendees.map(({ email }) => email), this.calEvent.organizer.email],
+      ...getReplyToHeader(
+        this.calEvent,
+        this.calEvent.attendees.filter(({ email }) => email !== this.attendee.email).map(({ email }) => email)
+      ),
       subject: `${this.calEvent.title}`,
-      html: await renderEmail("AttendeeScheduledEmail", {
-        calEvent: clonedCalEvent,
-        attendee: this.attendee,
-      }),
+      html: await this.getHtml(clonedCalEvent, this.attendee),
       text: this.getTextBody(),
     };
+  }
+
+  async getHtml(calEvent: CalendarEvent, attendee: Person) {
+    return await renderEmail("AttendeeScheduledEmail", {
+      calEvent,
+      attendee,
+    });
   }
 
   protected getTextBody(title = "", subtitle = "emailed_you_and_any_other_attendees"): string {
@@ -70,13 +73,11 @@ ${getRichDescription(this.calEvent, this.t)}
   }
 
   protected getTimezone(): string {
-    // Timezone is based on the first attendee in the attendee list
-    // as the first attendee is the one who created the booking
-    return this.calEvent.attendees[0].timeZone;
+    return this.attendee.timeZone;
   }
 
   protected getLocale(): string {
-    return this.calEvent.attendees[0].language.locale;
+    return this.attendee.language.locale;
   }
 
   protected getInviteeStart(format: string) {

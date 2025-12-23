@@ -1,12 +1,11 @@
-import { usePathname } from "next/navigation";
 import { shallow } from "zustand/shallow";
 
-import { useSchedule } from "@calcom/features/schedules";
+import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
+import { useSchedule } from "@calcom/features/schedules/lib/use-schedule/useSchedule";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { trpc } from "@calcom/trpc/react";
 
-import { useTimePreferences } from "../../lib/timePreferences";
-import { useBookerStore } from "../store";
+import { useBookerTime } from "../components/hooks/useBookerTime";
 
 export type useEventReturnType = ReturnType<typeof useEvent>;
 export type useScheduleForEventReturnType = ReturnType<typeof useScheduleForEvent>;
@@ -19,10 +18,11 @@ export type useScheduleForEventReturnType = ReturnType<typeof useScheduleForEven
  * Using this hook means you only need to use one hook, instead
  * of combining multiple conditional hooks.
  */
-export const useEvent = () => {
-  const [username, eventSlug] = useBookerStore((state) => [state.username, state.eventSlug], shallow);
-  const isTeamEvent = useBookerStore((state) => state.isTeamEvent);
-  const org = useBookerStore((state) => state.org);
+export const useEvent = (props?: { fromRedirectOfNonOrgLink?: boolean; disabled?: boolean }) => {
+  const [username, eventSlug, isTeamEvent, org] = useBookerStoreContext(
+    (state) => [state.username, state.eventSlug, state.isTeamEvent, state.org],
+    shallow
+  );
 
   const event = trpc.viewer.public.event.useQuery(
     {
@@ -30,8 +30,12 @@ export const useEvent = () => {
       eventSlug: eventSlug ?? "",
       isTeamEvent,
       org: org ?? null,
+      fromRedirectOfNonOrgLink: props?.fromRedirectOfNonOrgLink,
     },
-    { refetchOnWindowFocus: false, enabled: Boolean(username) && Boolean(eventSlug) }
+    {
+      refetchOnWindowFocus: false,
+      enabled: !props?.disabled && Boolean(username) && Boolean(eventSlug),
+    }
   );
 
   return {
@@ -55,33 +59,42 @@ export const useEvent = () => {
  * this way the multi day view will show data of both months.
  */
 export const useScheduleForEvent = ({
-  prefetchNextMonth,
   username,
   eventSlug,
   eventId,
   month,
   duration,
-  monthCount,
   dayCount,
   selectedDate,
   orgSlug,
   teamMemberEmail,
+  isTeamEvent,
+  useApiV2 = true,
+  bookerLayout,
 }: {
-  prefetchNextMonth?: boolean;
   username?: string | null;
   eventSlug?: string | null;
   eventId?: number | null;
   month?: string | null;
   duration?: number | null;
-  monthCount?: number;
   dayCount?: number | null;
   selectedDate?: string | null;
   orgSlug?: string;
   teamMemberEmail?: string | null;
-} = {}) => {
-  const { timezone } = useTimePreferences();
-  const event = useEvent();
-  const [usernameFromStore, eventSlugFromStore, monthFromStore, durationFromStore] = useBookerStore(
+  fromRedirectOfNonOrgLink?: boolean;
+  isTeamEvent?: boolean;
+  useApiV2?: boolean;
+  /**
+   * Required when prefetching is needed
+   */
+  bookerLayout?: {
+    layout: string;
+    extraDays: number;
+    columnViewExtraDays: { current: number };
+  };
+}) => {
+  const { timezone } = useBookerTime();
+  const [usernameFromStore, eventSlugFromStore, monthFromStore, durationFromStore] = useBookerStoreContext(
     (state) => [state.username, state.eventSlug, state.month, state.selectedDuration],
     shallow
   );
@@ -89,25 +102,21 @@ export const useScheduleForEvent = ({
   const searchParams = useCompatSearchParams();
   const rescheduleUid = searchParams?.get("rescheduleUid");
 
-  const pathname = usePathname();
-
-  const isTeam = !!event.data?.team?.parentId;
-
   const schedule = useSchedule({
     username: usernameFromStore ?? username,
     eventSlug: eventSlugFromStore ?? eventSlug,
-    eventId: event.data?.id ?? eventId,
+    eventId,
     timezone,
     selectedDate,
-    prefetchNextMonth,
-    monthCount,
     dayCount,
     rescheduleUid,
     month: monthFromStore ?? month,
     duration: durationFromStore ?? duration,
-    isTeamEvent: pathname?.indexOf("/team/") !== -1 || isTeam,
+    isTeamEvent,
     orgSlug,
     teamMemberEmail,
+    useApiV2: useApiV2,
+    bookerLayout,
   });
 
   return {
@@ -116,5 +125,7 @@ export const useScheduleForEvent = ({
     isError: schedule?.isError,
     isSuccess: schedule?.isSuccess,
     isLoading: schedule?.isLoading,
+    invalidate: schedule?.invalidate,
+    dataUpdatedAt: schedule?.dataUpdatedAt,
   };
 };

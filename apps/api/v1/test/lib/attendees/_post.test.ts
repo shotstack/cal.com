@@ -52,6 +52,8 @@ describe("POST /api/attendees", () => {
         bookingId: 1,
       };
 
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error
       prismaMock.attendee.create.mockResolvedValue(attendeeData);
       req.isSystemWideAdmin = true;
       req.userId = 123;
@@ -75,7 +77,7 @@ describe("POST /api/attendees", () => {
 
       const userBooking = { id: 1 };
 
-      prismaMock.booking.findFirst.mockResolvedValue(userBooking);
+      prismaMock.booking.findFirst.mockResolvedValue(userBooking as any);
 
       const attendeeData = {
         id: 1,
@@ -84,7 +86,8 @@ describe("POST /api/attendees", () => {
         timeZone: "UTC",
         bookingId: 1,
       };
-
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-expect-error
       prismaMock.attendee.create.mockResolvedValue(attendeeData);
 
       req.userId = 123;

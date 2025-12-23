@@ -1,21 +1,17 @@
 import Link from "next/link";
 import { Fragment } from "react";
 
-import { classNames } from "@calcom/lib";
+import { useIsPlatform } from "@calcom/atoms/hooks/useIsPlatform";
+import { Dialog } from "@calcom/features/components/controlled-dialog";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import {
-  Alert,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  EmptyScreen,
-  ListItem,
-  ListItemText,
-  ListItemTitle,
-  SkeletonContainer,
-  SkeletonText,
-  Switch,
-} from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+import { Alert } from "@calcom/ui/components/alert";
+import { DialogContent, DialogClose } from "@calcom/ui/components/dialog";
+import { EmptyScreen } from "@calcom/ui/components/empty-screen";
+import { Switch } from "@calcom/ui/components/form";
+import { ListItem, ListItemText, ListItemTitle } from "@calcom/ui/components/list";
+import { SkeletonContainer } from "@calcom/ui/components/skeleton";
+import { SkeletonText } from "@calcom/ui/components/skeleton";
 
 import type { UseCalendarsReturnType } from "../hooks/useCalendars";
 
@@ -32,7 +28,7 @@ interface IOverlayCalendarSettingsModalProps {
 const SkeletonLoader = () => {
   return (
     <SkeletonContainer>
-      <div className="border-subtle mt-3 space-y-4 rounded-xl border px-4 py-4 ">
+      <div className="border-subtle mt-3 stack-y-4 rounded-xl border px-4 py-4 ">
         <SkeletonText className="h-4 w-full" />
         <SkeletonText className="h-4 w-full" />
         <SkeletonText className="h-4 w-full" />
@@ -52,6 +48,7 @@ export function OverlayCalendarSettingsModal({
   checkIsCalendarToggled,
 }: IOverlayCalendarSettingsModalProps) {
   const { t } = useLocale();
+  const isPlatform = useIsPlatform();
 
   return (
     <>
@@ -93,12 +90,16 @@ export function OverlayCalendarSettingsModal({
                                       "h-10 w-10",
                                       item.integration.logo.includes("-dark") && "dark:invert"
                                     )}
-                                    src={item.integration.logo}
-                                    alt={item.integration.title}
+                                    src={
+                                      isPlatform
+                                        ? `https://app.cal.com${item.integration.logo}`
+                                        : item.integration.logo
+                                    }
+                                    alt={`${item.integration.title} logo`}
                                   />
                                 )
                               }
-                              <div className="flex-grow truncate pl-2">
+                              <div className="grow truncate pl-2">
                                 <ListItemTitle component="h3" className="space-x-2 rtl:space-x-reverse">
                                   <Link href={`/apps/${item.integration.slug}`}>
                                     {item.integration.name || item.integration.title}
@@ -108,7 +109,7 @@ export function OverlayCalendarSettingsModal({
                               </div>
                             </div>
                             <div className="border-subtle w-full border-t pt-4">
-                              <ul className="space-y-4">
+                              <ul className="stack-y-4">
                                 {item.calendars.map((cal, index) => {
                                   const id = cal.integrationTitle ?? `calendar-switch-${index}`;
                                   return (

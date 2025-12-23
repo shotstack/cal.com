@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 
+import { checkAdminOrOwner } from "@calcom/features/auth/lib/checkAdminOrOwner";
 import BrandColorsForm from "@calcom/features/ee/components/BrandColorsForm";
 import { AppearanceSkeletonLoader } from "@calcom/features/ee/components/CommonSkeletonLoaders";
 import SectionBottomActions from "@calcom/features/settings/SectionBottomActions";
@@ -11,20 +12,22 @@ import { APP_NAME } from "@calcom/lib/constants";
 import { DEFAULT_LIGHT_BRAND_COLOR, DEFAULT_DARK_BRAND_COLOR } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { useParamsWithFallback } from "@calcom/lib/hooks/useParamsWithFallback";
-import { MembershipRole } from "@calcom/prisma/enums";
 import { trpc } from "@calcom/trpc/react";
 import type { RouterOutputs } from "@calcom/trpc/react";
-import { Button, Form, Meta, showToast, SettingsToggle } from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { Form } from "@calcom/ui/components/form";
+import { SettingsToggle } from "@calcom/ui/components/form";
+import { showToast } from "@calcom/ui/components/toast";
+import { revalidateTeamDataCache } from "@calcom/web/app/(booking-page-wrapper)/team/[slug]/[type]/actions";
 
 import ThemeLabel from "../../../settings/ThemeLabel";
-import { getLayout } from "../../../settings/layouts/SettingsLayout";
 
 type BrandColorsFormValues = {
   brandColor: string;
   darkBrandColor: string;
 };
 
-type ProfileViewProps = { team: RouterOutputs["viewer"]["teams"]["getMinimal"] };
+type ProfileViewProps = { team: RouterOutputs["viewer"]["teams"]["get"] };
 
 const ProfileView = ({ team }: ProfileViewProps) => {
   const { t } = useLocale();
@@ -32,6 +35,7 @@ const ProfileView = ({ team }: ProfileViewProps) => {
 
   const [hideBrandingValue, setHideBrandingValue] = useState(team?.hideBranding ?? false);
   const [hideBookATeamMember, setHideBookATeamMember] = useState(team?.hideBookATeamMember ?? false);
+  const [hideTeamProfileLink, setHideTeamProfileLink] = useState(team?.hideTeamProfileLink ?? false);
 
   const themeForm = useForm<{ theme: string | null | undefined }>({
     defaultValues: {
@@ -68,6 +72,14 @@ const ProfileView = ({ team }: ProfileViewProps) => {
       }
 
       showToast(t("your_team_updated_successfully"), "success");
+      if (res?.slug) {
+        // Appearance changes (theme, colours, branding toggles) are read on the team booking page through
+        // `getCachedTeamData` in `queries.ts`.
+        await revalidateTeamDataCache({
+          teamSlug: res?.slug,
+          orgSlug: team?.parent?.slug ?? null,
+        });
+      }
     },
   });
 
@@ -75,36 +87,30 @@ const ProfileView = ({ team }: ProfileViewProps) => {
     mutation.mutate({ ...values, id: team.id });
   };
 
-  const isAdmin =
-    team && (team.membership.role === MembershipRole.OWNER || team.membership.role === MembershipRole.ADMIN);
+  const isAdmin = team && checkAdminOrOwner(team.membership.role);
 
   return (
     <>
-      <Meta
-        title={t("booking_appearance")}
-        description={t("appearance_team_description")}
-        borderInShellHeader={false}
-      />
       {isAdmin ? (
         <>
           <Form
             form={themeForm}
-            handleSubmit={(values) => {
+            handleSubmit={({ theme }) => {
               mutation.mutate({
                 id: team.id,
-                theme: values.theme === "" ? null : values.theme,
+                theme: theme === "light" || theme === "dark" ? theme : null,
               });
             }}>
             <div className="border-subtle mt-6 flex items-center rounded-t-xl border p-6 text-sm">
               <div>
-                <p className="font-semibold">{t("theme")}</p>
-                <p className="text-default">{t("theme_applies_note")}</p>
+                <p className="mt-0.5 text-base font-semibold leading-none">{t("theme")}</p>
+                <p className="text-default text-sm leading-normal">{t("theme_applies_note")}</p>
               </div>
             </div>
             <div className="border-subtle flex flex-col justify-between border-x px-6 py-8 sm:flex-row">
               <ThemeLabel
                 variant="system"
-                value={null}
+                value="system"
                 label={t("theme_system")}
                 defaultChecked={team.theme === null}
                 register={themeForm.register}
@@ -171,6 +177,18 @@ const ProfileView = ({ team }: ProfileViewProps) => {
                 mutation.mutate({ id: team.id, hideBookATeamMember: checked });
               }}
             />
+
+            <SettingsToggle
+              toggleSwitchAtTheEnd={true}
+              title={t("hide_team_profile_link")}
+              disabled={mutation?.isPending}
+              description={t("hide_team_profile_link_description")}
+              checked={hideTeamProfileLink ?? false}
+              onCheckedChange={(checked) => {
+                setHideTeamProfileLink(checked);
+                mutation.mutate({ id: team.id, hideTeamProfileLink: checked });
+              }}
+            />
           </div>
         </>
       ) : (
@@ -192,7 +210,7 @@ const ProfileViewWrapper = () => {
     data: team,
     isPending,
     error,
-  } = trpc.viewer.teams.getMinimal.useQuery(
+  } = trpc.viewer.teams.get.useQuery(
     { teamId: Number(params.id) },
     {
       enabled: !!Number(params.id),
@@ -208,16 +226,11 @@ const ProfileViewWrapper = () => {
     [error]
   );
 
-  if (isPending)
-    return (
-      <AppearanceSkeletonLoader title={t("appearance")} description={t("appearance_team_description")} />
-    );
+  if (isPending) return <AppearanceSkeletonLoader />;
 
   if (!team) return null;
 
   return <ProfileView team={team} />;
 };
-
-ProfileViewWrapper.getLayout = getLayout;
 
 export default ProfileViewWrapper;

@@ -1,6 +1,6 @@
-import { prisma } from "@calcom/prisma";
+import { getOrganizationRepository } from "@calcom/features/ee/organizations/di/OrganizationRepository.container";
 
-import type { TrpcSessionUser } from "../../../trpc";
+import type { TrpcSessionUser } from "../../../types";
 
 type ListOptions = {
   ctx: {
@@ -12,18 +12,12 @@ export const listOtherTeamHandler = async ({ ctx: { user } }: ListOptions) => {
   if (!user?.organization?.isOrgAdmin) {
     return [];
   }
-  const teamsInOrgIamNotPartOf = await prisma.team.findMany({
-    where: {
-      parentId: user?.organization?.id ?? null,
-      members: {
-        none: {
-          userId: user.id,
-        },
-      },
-    },
-  });
 
-  return teamsInOrgIamNotPartOf;
+  const organizationRepository = getOrganizationRepository();
+  return await organizationRepository.findTeamsInOrgIamNotPartOf({
+    userId: user.id,
+    parentId: user?.organization?.id ?? null,
+  });
 };
 
 export default listOtherTeamHandler;

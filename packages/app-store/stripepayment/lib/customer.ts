@@ -1,7 +1,6 @@
-import { Prisma } from "@prisma/client";
-
 import { HttpError as HttpCode } from "@calcom/lib/http-error";
-import prisma from "@calcom/prisma";
+import { prisma } from "@calcom/prisma";
+import type { Prisma } from "@calcom/prisma/client";
 
 import stripe from "./server";
 
@@ -24,15 +23,13 @@ export async function getStripeCustomerIdFromUserId(userId: number) {
 
   return customerId;
 }
+const userType = {
+  email: true,
+  metadata: true,
+} satisfies Prisma.UserSelect;
 
-const userType = Prisma.validator<Prisma.UserArgs>()({
-  select: {
-    email: true,
-    metadata: true,
-  },
-});
+type UserType = Prisma.UserGetPayload<{ select: typeof userType }>;
 
-type UserType = Prisma.UserGetPayload<typeof userType>;
 /** This will retrieve the customer ID from Stripe or create it if it doesn't exists yet. */
 export async function getStripeCustomerId(user: UserType): Promise<string> {
   let customerId: string | null = null;
@@ -83,7 +80,11 @@ export async function deleteStripeCustomer(user: UserType): Promise<string | nul
   return deletedCustomer.id;
 }
 
-export async function retrieveOrCreateStripeCustomerByEmail(email: string, stripeAccountId: string) {
+export async function retrieveOrCreateStripeCustomerByEmail(
+  stripeAccountId: string,
+  email: string,
+  phoneNumber?: string | null
+) {
   const customer = await stripe.customers.list(
     {
       email,
@@ -98,7 +99,7 @@ export async function retrieveOrCreateStripeCustomerByEmail(email: string, strip
     return customer.data[0];
   } else {
     const newCustomer = await stripe.customers.create(
-      { email },
+      { email, phone: phoneNumber ?? undefined },
       {
         stripeAccount: stripeAccountId,
       }

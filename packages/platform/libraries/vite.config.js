@@ -2,11 +2,19 @@
 import react from "@vitejs/plugin-react";
 import { resolve } from "path";
 import path from "path";
+import { dirname } from "path";
+import { fileURLToPath } from "url";
 import { defineConfig } from "vite";
 import dts from "vite-plugin-dts";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 // https://vitejs.dev/guide/build.html#library-mode
 export default defineConfig({
+  define: {
+    "process.env.USE_POOL": `"true"`,
+  },
   esbuild: {
     target: "node18",
     platform: "node",
@@ -16,7 +24,21 @@ export default defineConfig({
     platform: "node",
     ssr: true,
     lib: {
-      entry: resolve(__dirname, "./index.ts"),
+      entry: {
+        index: resolve(__dirname, "./index.ts"),
+        schedules: resolve(__dirname, "./schedules.ts"),
+        emails: resolve(__dirname, "./emails.ts"),
+        "event-types": resolve(__dirname, "./event-types.ts"),
+        "app-store": resolve(__dirname, "./app-store.ts"),
+        workflows: resolve(__dirname, "./workflows.ts"),
+        slots: resolve(__dirname, "./slots.ts"),
+        conferencing: resolve(__dirname, "./conferencing.ts"),
+        repositories: resolve(__dirname, "./repositories.ts"),
+        bookings: resolve(__dirname, "./bookings.ts"),
+        organizations: resolve(__dirname, "./organizations.ts"),
+        "private-links": resolve(__dirname, "./private-links.ts"),
+        pbac: resolve(__dirname, "./pbac.ts"),
+      },
       name: "calcom-lib",
       fileName: "calcom-lib",
     },
@@ -24,6 +46,7 @@ export default defineConfig({
       dynamicRequireRoot: "../../../apps/web",
       dynamicRequireTargets: ["next-i18next.config.js"],
       ignoreDynamicRequires: true,
+      include: ["../../prisma/client/**"],
     },
     rollupOptions: {
       external: [
@@ -37,6 +60,8 @@ export default defineConfig({
         "fs/promises",
         "perf_hooks",
         "@prisma/client",
+        "@prisma/adapter-pg",
+        "pg",
         "async",
         "libphonenumber-js",
         "lodash",
@@ -54,7 +79,7 @@ export default defineConfig({
         "ical.js",
         "ics",
         "tsdav",
-        "googleapis",
+        "@googleapis/calendar",
         "rrule",
         "@hubspot/api-client",
         "querystring",
@@ -66,6 +91,7 @@ export default defineConfig({
         "lru-cache",
         "next-auth/jwt",
         "memory-cache",
+        "@jsforce/jsforce-node",
         "jsforce",
         "axios",
         "qs",
@@ -91,7 +117,6 @@ export default defineConfig({
         "dayjs/plugin/timezone.js",
         "dayjs/plugin/toArray.js",
         "dayjs/plugin/utc.js",
-        "tslog",
         "@prisma/extension-accelerate",
         "@ewsjs/xhr",
         "next-i18next/serverSideTranslations",
@@ -108,6 +133,8 @@ export default defineConfig({
           "fs/promises": "fs/promises",
           perf_hooks: "perf_hooks",
           "@prisma/client": "@prisma/client",
+          "@prisma/adapter-pg": "@prisma/adapter-pg",
+          pg: "pg",
           async: "async",
           "libphonenumber-js": "libphonenumber-js",
           lodash: "lodash",
@@ -125,7 +152,7 @@ export default defineConfig({
           "ical.js": "ical.js",
           ics: "ics",
           tsdav: "tsdav",
-          googleapis: "googleapis",
+          "@googleapis/calendar": "@googleapis/calendar",
           rrule: "rrule",
           "@hubspot/api-client": "@hubspot/api-client",
           querystring: "querystring",
@@ -137,6 +164,7 @@ export default defineConfig({
           "lru-cache": "lru-cache",
           "next-auth/jwt": "next-auth/jwt",
           "memory-cache": "memory-cache",
+          "@jsforce-node": "@jsforce/jsforce-node",
           jsforce: "jsforce",
           axios: "axios",
           qs: "qs",
@@ -173,13 +201,20 @@ export default defineConfig({
   },
   plugins: [react(), dts()],
   resolve: {
+    conditions: ["node", "import", "require", "default"],
     alias: {
+      "@calcom/lib/server/i18n": path.resolve(__dirname, "./i18n.ts"),
+      "./server/i18n": path.resolve(__dirname, "./i18n.ts"),
+      "../server/i18n": path.resolve(__dirname, "./i18n.ts"),
       "@": path.resolve(__dirname, "./src"),
       "@calcom/lib": path.resolve(__dirname, "../../lib"),
       "@calcom/trpc": resolve("../../trpc"),
       "lru-cache": resolve("../../../node_modules/lru-cache/dist/cjs/index.js"),
-      "@prisma/client": resolve("../../../node_modules/@prisma/client"),
-      "@calcom/prisma/client": resolve("../../../node_modules/.prisma/client"),
+      "@calcom/prisma/client/runtime/library": resolve("../../prisma/client/runtime/library"),
+      "@calcom/prisma/client": resolve("../../prisma/client"),
+      "@calcom/platform-constants": path.resolve(__dirname, "../constants/index.ts"),
+      "@calcom/platform-types": path.resolve(__dirname, "../types/index.ts"),
+      tslog: path.resolve(__dirname, "../../../apps/api/v2/src/lib/logger.bridge.ts"),
     },
   },
 });

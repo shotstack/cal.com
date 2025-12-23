@@ -1,4 +1,4 @@
-import type { IBookingRedirect } from "../../templates/booking-redirect-notification";
+import type { IBookingRedirect } from "../../lib/types/booking-redirect-types";
 import { BaseEmailHtml } from "../components";
 
 export const BookingRedirectEmailNotification = (
@@ -37,6 +37,7 @@ export const BookingRedirectEmailNotification = (
             eventOwner: props.eventOwner,
             dates: props.dates,
             oldDates: props.oldDates ?? "",
+            interpolation: { escapeValue: false },
           }
         )}
         <br />

@@ -1,19 +1,32 @@
 import z from "zod";
 
-import { _SelectedCalendarModel as SelectedCalendar } from "@calcom/prisma/zod";
+import { SelectedCalendarSchema } from "@calcom/prisma/zod/modelSchema/SelectedCalendarSchema";
 
 import { schemaQueryIdAsString } from "./shared/queryIdString";
 import { schemaQueryIdParseInt } from "./shared/queryIdTransformParseInt";
 
-export const schemaSelectedCalendarBaseBodyParams = SelectedCalendar;
+export const schemaSelectedCalendarBaseBodyParams = SelectedCalendarSchema;
 
-export const schemaSelectedCalendarPublic = SelectedCalendar.omit({});
+export const schemaSelectedCalendarPublic = SelectedCalendarSchema.omit({});
 
-export const schemaSelectedCalendarBodyParams = schemaSelectedCalendarBaseBodyParams.partial({
-  userId: true,
-});
+export const schemaSelectedCalendarBodyParams = schemaSelectedCalendarBaseBodyParams
+  .pick({
+    integration: true,
+    externalId: true,
+    userId: true,
+  })
+  .partial({
+    userId: true,
+  });
 
-export const schemaSelectedCalendarUpdateBodyParams = schemaSelectedCalendarBaseBodyParams.partial();
+export const schemaSelectedCalendarUpdateBodyParams = schemaSelectedCalendarBaseBodyParams
+  .omit({
+    // id is decided by DB
+    id: true,
+    // No eventTypeId support in API v1
+    eventTypeId: true,
+  })
+  .partial();
 
 export const selectedCalendarIdSchema = schemaQueryIdAsString.transform((v, ctx) => {
   /** We can assume the first part is the userId since it's an integer */

@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Button } from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
 
 import { SearchDialog } from "./SearchDialog";
 
@@ -16,7 +16,7 @@ export default function SelectGifInput(props: ISelectGifInput) {
   const [showDialog, setShowDialog] = useState(false);
 
   return (
-    <div className="flex flex-col items-start space-x-2 space-y-2 rtl:space-x-reverse">
+    <div className="flex flex-col items-start space-x-2 stack-y-2 rtl:space-x-reverse">
       {selectedGif && (
         <div className="min-h-[200px]">
           <img alt="Selected Gif Image" src={selectedGif} />

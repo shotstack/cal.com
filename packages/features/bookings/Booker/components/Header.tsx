@@ -1,15 +1,21 @@
 import { useCallback, useMemo } from "react";
 import { shallow } from "zustand/shallow";
 
+import { useIsPlatform } from "@calcom/atoms/hooks/useIsPlatform";
 import dayjs from "@calcom/dayjs";
 import { useIsEmbed } from "@calcom/embed-core/embed-iframe";
+import { useBookerStoreContext } from "@calcom/features/bookings/Booker/BookerStoreProvider";
+import { useInitializeWeekStart } from "@calcom/features/bookings/Booker/components/hooks/useInitializeWeekStart";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { BookerLayouts } from "@calcom/prisma/zod-utils";
-import { Button, ButtonGroup, Icon, ToggleGroup, Tooltip } from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { ButtonGroup } from "@calcom/ui/components/buttonGroup";
+import { ToggleGroup } from "@calcom/ui/components/form";
+import { Icon } from "@calcom/ui/components/icon";
+import { Tooltip } from "@calcom/ui/components/tooltip";
 
 import { TimeFormatToggle } from "../../components/TimeFormatToggle";
-import { useBookerStore } from "../store";
 import type { BookerLayout } from "../types";
 
 export function Header({
@@ -20,6 +26,7 @@ export function Header({
   eventSlug,
   isMyLink,
   renderOverlay,
+  isCalendarView,
 }: {
   extraDays: number;
   isMobile: boolean;
@@ -28,20 +35,24 @@ export function Header({
   eventSlug: string;
   isMyLink: boolean;
   renderOverlay?: () => JSX.Element | null;
+  isCalendarView?: boolean;
 }) {
   const { t, i18n } = useLocale();
   const isEmbed = useIsEmbed();
-  const [layout, setLayout] = useBookerStore((state) => [state.layout, state.setLayout], shallow);
-  const selectedDateString = useBookerStore((state) => state.selectedDate);
-  const setSelectedDate = useBookerStore((state) => state.setSelectedDate);
-  const addToSelectedDate = useBookerStore((state) => state.addToSelectedDate);
-  const isMonthView = layout === BookerLayouts.MONTH_VIEW;
-  const selectedDate = dayjs(selectedDateString);
+  const isPlatform = useIsPlatform();
+  const [layout, setLayout] = useBookerStoreContext((state) => [state.layout, state.setLayout], shallow);
+  const selectedDateString = useBookerStoreContext((state) => state.selectedDate);
+  const setSelectedDate = useBookerStoreContext((state) => state.setSelectedDate);
+  const addToSelectedDate = useBookerStoreContext((state) => state.addToSelectedDate);
+  const isMonthView = isCalendarView !== undefined ? !isCalendarView : layout === BookerLayouts.MONTH_VIEW;
   const today = dayjs();
+  const selectedDate = selectedDateString ? dayjs(selectedDateString) : today;
   const selectedDateMin3DaysDifference = useMemo(() => {
     const diff = today.diff(selectedDate, "days");
     return diff > 3 || diff < -3;
   }, [today, selectedDate]);
+
+  useInitializeWeekStart(isPlatform, isCalendarView ?? false);
 
   const onLayoutToggle = useCallback(
     (newLayout: string) => {
@@ -102,7 +113,7 @@ export function Header({
 
   return (
     <div className="border-default relative z-10 flex border-b px-5 py-4 ltr:border-l rtl:border-r">
-      <div className="flex items-center gap-5 rtl:flex-grow">
+      <div className="flex items-center gap-5 rtl:grow">
         <FormattedSelectedDateRange />
         <ButtonGroup>
           <Button
@@ -125,7 +136,10 @@ export function Header({
             <Button
               className="capitalize ltr:ml-2 rtl:mr-2"
               color="secondary"
-              onClick={() => setSelectedDate(today.format("YYYY-MM-DD"))}>
+              onClick={() => {
+                const selectedDate = (isCalendarView ? today.startOf("week") : today).format("YYYY-MM-DD");
+                setSelectedDate({ date: selectedDate });
+              }}>
               {t("today")}
             </Button>
           )}
@@ -170,6 +184,7 @@ const LayoutToggle = ({
   enabledLayouts?: BookerLayouts[];
 }) => {
   const isEmbed = useIsEmbed();
+  const isPlatform = useIsPlatform();
 
   const { t } = useLocale();
 
@@ -177,17 +192,32 @@ const LayoutToggle = ({
     return [
       {
         value: BookerLayouts.MONTH_VIEW,
-        label: <Icon name="calendar" width="16" height="16" />,
+        label: (
+          <>
+            <Icon name="calendar" width="16" height="16" />
+            <span className="sr-only">${t("switch_monthly")}</span>
+          </>
+        ),
         tooltip: t("switch_monthly"),
       },
       {
         value: BookerLayouts.WEEK_VIEW,
-        label: <Icon name="grid-3x3" width="16" height="16" />,
+        label: (
+          <>
+            <Icon name="grid-3x3" width="16" height="16" />
+            <span className="sr-only">${t("switch_weekly")}</span>
+          </>
+        ),
         tooltip: t("switch_weekly"),
       },
       {
         value: BookerLayouts.COLUMN_VIEW,
-        label: <Icon name="columns-3" width="16" height="16" />,
+        label: (
+          <>
+            <Icon name="columns-3" width="16" height="16" />
+            <span className="sr-only">${t("switch_columnview")}</span>
+          </>
+        ),
         tooltip: t("switch_columnview"),
       },
     ].filter((layout) => enabledLayouts?.includes(layout.value as BookerLayouts));
@@ -198,6 +228,10 @@ const LayoutToggle = ({
   if (isEmbed) {
     return null;
   }
+
+  // just like embed the layout toggle doesn't look rightly placed in platform
+  // the layout can be toggled via props in the booker atom
+  if (isPlatform) return null;
 
   return <ToggleGroup onValueChange={onLayoutToggle} defaultValue={layout} options={layoutOptions} />;
 };

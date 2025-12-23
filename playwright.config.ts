@@ -57,12 +57,14 @@ if (IS_EMBED_REACT_TEST) {
   });
 }
 
-const DEFAULT_CHROMIUM = {
+const DEFAULT_CHROMIUM: NonNullable<PlaywrightTestConfig["projects"]>[number]["use"] = {
   ...devices["Desktop Chrome"],
   timezoneId: "Europe/London",
   storageState: {
     cookies: [
       {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore TS definitions for USE are wrong.
         url: WEBAPP_URL,
         name: "calcom-timezone-dialog",
         expires: -1,
@@ -73,6 +75,10 @@ const DEFAULT_CHROMIUM = {
   locale: "en-US",
   /** If navigation takes more than this, then something's wrong, let's fail fast. */
   navigationTimeout: DEFAULT_NAVIGATION_TIMEOUT,
+  // chromium-specific permissions - Chromium seems to be the only browser type that requires perms
+  contextOptions: {
+    permissions: ["clipboard-read", "clipboard-write"],
+  },
 };
 
 const config: PlaywrightTestConfig = {
@@ -96,10 +102,6 @@ const config: PlaywrightTestConfig = {
     locale: "en-US",
     trace: "retain-on-failure",
     headless,
-    // chromium-specific permissions - Chromium seems to be the only browser type that requires perms
-    contextOptions: {
-      permissions: ["clipboard-read", "clipboard-write"],
-    },
   },
   projects: [
     {
@@ -169,6 +171,15 @@ const config: PlaywrightTestConfig = {
       },
       use: { ...devices["Desktop Safari"] },
     },
+    {
+      name: "@calcom/embed-core--isMobile",
+      testDir: "./packages/embeds/embed-core/",
+      testMatch: /.*\.e2e\.tsx?/,
+      expect: {
+        timeout: DEFAULT_EXPECT_TIMEOUT,
+      },
+      use: { ...devices["iPhone 13"] },
+    },
   ],
 };
 
@@ -198,12 +209,14 @@ expect.extend({
     const u = new URL(iframe.url());
 
     const pathname = u.pathname;
-    const expectedPathname = `${expectedUrlDetails.pathname}/embed`;
-    if (expectedPathname && expectedPathname !== pathname) {
-      return {
-        pass: false,
-        message: () => `Expected pathname to be ${expectedPathname} but got ${pathname}`,
-      };
+    if (expectedUrlDetails.pathname) {
+      const expectedPathname = `${expectedUrlDetails.pathname}/embed`;
+      if (pathname !== expectedPathname) {
+        return {
+          pass: false,
+          message: () => `Expected pathname to be ${expectedPathname} but got ${pathname}`,
+        };
+      }
     }
 
     const origin = u.origin;
@@ -310,7 +323,7 @@ expect.extend({
 export default config;
 
 function ensureAppServerIsReadyToServeEmbed(webServer: { port?: number; url?: string }) {
-  // We should't depend on an embed dependency for App's tests. So, conditionally modify App webServer.
+  // We shouldn't depend on an embed dependency for App's tests. So, conditionally modify App webServer.
   // Only one of port or url can be specified, so remove port.
   delete webServer.port;
   webServer.url = `${process.env.NEXT_PUBLIC_WEBAPP_URL}/embed/embed.js`;

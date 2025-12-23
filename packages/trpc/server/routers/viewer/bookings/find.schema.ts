@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-const ZFindInputSchema = z.object({
+export type TFindInputSchema = {
+  bookingUid?: string;
+};
+
+export const ZFindInputSchema: z.ZodType<TFindInputSchema> = z.object({
   bookingUid: z.string().optional(),
 });
-
-export type TFindInputSchema = z.infer<typeof ZFindInputSchema>;
-
-export { ZFindInputSchema };

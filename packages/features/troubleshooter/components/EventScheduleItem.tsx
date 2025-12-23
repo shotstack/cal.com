@@ -2,7 +2,8 @@ import Link from "next/link";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import { Badge, Label } from "@calcom/ui";
+import { Badge } from "@calcom/ui/components/badge";
+import { Label } from "@calcom/ui/components/form";
 
 import { useTroubleshooterStore } from "../store";
 import { TroubleshooterListItemHeader } from "./TroubleshooterListItemContainer";
@@ -30,7 +31,7 @@ export function EventScheduleItem() {
         suffixSlot={
           schedule && (
             <Link href={`/availability/${schedule.id}`} className="inline-flex">
-              <Badge color="orange" size="sm" className="hidden hover:cursor-pointer group-hover:inline-flex">
+              <Badge color="orange" size="sm" className="invisible hover:cursor-pointer group-hover:visible">
                 {t("edit")}
               </Badge>
             </Link>

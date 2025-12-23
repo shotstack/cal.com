@@ -8,22 +8,22 @@ import { UsersModule } from "@/modules/users/users.module";
 import { INestApplication } from "@nestjs/common";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import { Test } from "@nestjs/testing";
-import { User } from "@prisma/client";
 import * as request from "supertest";
 import { SchedulesRepositoryFixture } from "test/fixtures/repository/schedules.repository.fixture";
 import { UserRepositoryFixture } from "test/fixtures/repository/users.repository.fixture";
 import { withApiAuth } from "test/utils/withApiAuth";
 
 import { CAL_API_VERSION_HEADER, SUCCESS_STATUS, VERSION_2024_06_11 } from "@calcom/platform-constants";
-import {
+import type {
   CreateScheduleInput_2024_06_11,
   CreateScheduleOutput_2024_06_11,
   GetScheduleOutput_2024_06_11,
   GetSchedulesOutput_2024_06_11,
   ScheduleOutput_2024_06_11,
   UpdateScheduleOutput_2024_06_11,
+  UpdateScheduleInput_2024_06_11,
 } from "@calcom/platform-types";
-import { UpdateScheduleInput_2024_06_11 } from "@calcom/platform-types";
+import type { User } from "@calcom/prisma/client";
 
 describe("Schedules Endpoints", () => {
   describe("User Authentication", () => {
@@ -32,11 +32,11 @@ describe("Schedules Endpoints", () => {
     let userRepositoryFixture: UserRepositoryFixture;
     let scheduleRepositoryFixture: SchedulesRepositoryFixture;
 
-    const userEmail = "schedules-controller-e2e@api.com";
+    const userEmail = `schedules-2024-06-11-user@api.com`;
     let user: User;
 
     const createScheduleInput: CreateScheduleInput_2024_06_11 = {
-      name: "work",
+      name: `schedules-2024-06-11-work`,
       timeZone: "Europe/Rome",
       isDefault: true,
     };
@@ -121,11 +121,13 @@ describe("Schedules Endpoints", () => {
       expect(outputSchedule?.isDefault).toEqual(expected.isDefault);
       expect(outputSchedule?.availability.length).toEqual(expectedAvailabilityLength);
 
-      const outputScheduleAvailability = outputSchedule?.availability[0];
-      expect(outputScheduleAvailability).toBeDefined();
-      expect(outputScheduleAvailability?.days).toEqual(expected.availability?.[0].days);
-      expect(outputScheduleAvailability?.startTime).toEqual(expected.availability?.[0].startTime);
-      expect(outputScheduleAvailability?.endTime).toEqual(expected.availability?.[0].endTime);
+      if (expectedAvailabilityLength) {
+        const outputScheduleAvailability = outputSchedule?.availability[0];
+        expect(outputScheduleAvailability).toBeDefined();
+        expect(outputScheduleAvailability?.days).toEqual(expected.availability?.[0].days);
+        expect(outputScheduleAvailability?.startTime).toEqual(expected.availability?.[0].startTime);
+        expect(outputScheduleAvailability?.endTime).toEqual(expected.availability?.[0].endTime);
+      }
 
       expect(JSON.stringify(outputSchedule?.overrides)).toEqual(JSON.stringify(expected.overrides));
     }
@@ -217,6 +219,33 @@ describe("Schedules Endpoints", () => {
 
           const expectedSchedule = { ...createdSchedule, overrides };
           outputScheduleMatchesExpected(responseSchedule, expectedSchedule, 1);
+
+          createdSchedule = responseSchedule;
+        });
+    });
+
+    it("should empty availabilities and overrides", async () => {
+      const body: UpdateScheduleInput_2024_06_11 = {
+        availability: [],
+        overrides: [],
+      };
+
+      return request(app.getHttpServer())
+        .patch(`/api/v2/schedules/${createdSchedule.id}`)
+        .set(CAL_API_VERSION_HEADER, VERSION_2024_06_11)
+        .send(body)
+        .expect(200)
+        .then((response: any) => {
+          const responseData: UpdateScheduleOutput_2024_06_11 = response.body;
+          expect(responseData.status).toEqual(SUCCESS_STATUS);
+          const responseSchedule = responseData.data;
+
+          const expectedSchedule = {
+            ...createdSchedule,
+            overrides: body.overrides,
+            availability: body.availability,
+          };
+          outputScheduleMatchesExpected(responseSchedule, expectedSchedule, 0);
 
           createdSchedule = responseSchedule;
         });

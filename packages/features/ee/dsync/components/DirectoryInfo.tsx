@@ -1,13 +1,16 @@
 import type { Directory } from "@boxyhq/saml-jackson";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Button, showToast, Label, Tooltip } from "@calcom/ui";
+import { showToast } from "@calcom/ui/components/toast";
+import { Label } from "@calcom/ui/components/form";
+import { Tooltip } from "@calcom/ui/components/tooltip";
+import { Button } from "@calcom/ui/components/button";
 
 const DirectoryInfo = ({ directory }: { directory: Directory }) => {
   const { t } = useLocale();
 
   return (
-    <div className="space-y-8">
+    <div className="stack-y-8">
       <p className="text-default text-sm font-normal leading-6 dark:text-gray-300">
         {t("directory_sync_info_description")}
       </p>

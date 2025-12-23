@@ -10,11 +10,15 @@ vi.mock("@calcom/lib/hooks/useLocale", () => ({
 }));
 
 // Mock the Dropdown component
-vi.mock("../../form/dropdown", () => ({
+vi.mock("../../dropdown", () => ({
   Dropdown: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock("@calcom/lib/hooks/useMediaQuery", () => ({
+  default: (_query: string) => false,
 }));
 
 describe("AddVariablesDropdown", () => {
@@ -36,7 +40,7 @@ describe("AddVariablesDropdown", () => {
     render(<AddVariablesDropdown addVariable={mockAddVariable} variables={variables} />);
     fireEvent.click(screen.getByText("add_variable"));
     await waitFor(() => {
-      expect(screen.getByText("add_dynamic_variables".toLocaleUpperCase())).toBeInTheDocument();
+      expect(screen.getByText("add_dynamic_variables")).toBeInTheDocument();
     });
   });
 

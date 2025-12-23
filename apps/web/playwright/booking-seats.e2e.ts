@@ -7,9 +7,11 @@ import { BookingStatus } from "@calcom/prisma/enums";
 
 import { test } from "./lib/fixtures";
 import {
+  confirmReschedule,
   createNewSeatedEventType,
-  selectFirstAvailableTimeSlotNextMonth,
   createUserWithSeatedEventAndAttendees,
+  selectFirstAvailableTimeSlotNextMonth,
+  submitAndWaitForResponse,
 } from "./lib/testUtils";
 
 test.describe.configure({ mode: "parallel" });
@@ -104,7 +106,8 @@ test.describe("Booking with Seats", () => {
 
     // confirm cancellation
     await page.locator('[data-testid="confirm_cancel"]').click();
-    await page.waitForLoadState("networkidle");
+
+    await expect(page.locator("text=This event is canceled")).toBeVisible();
 
     const updatedBooking = await prisma.booking.findFirst({
       where: { id: booking.id },
@@ -159,9 +162,9 @@ test.describe("Reschedule for booking with seats", () => {
       `/booking/${references[0].referenceUid}?cancel=true&seatReferenceUid=${references[0].referenceUid}`
     );
 
-    await page.locator('[data-testid="confirm_cancel"]').click();
-
-    await page.waitForResponse((res) => res.url().includes("api/cancel") && res.status() === 200);
+    await submitAndWaitForResponse(page, "/api/cancel", {
+      action: () => page.locator('[data-testid="confirm_cancel"]').click(),
+    });
 
     const oldBooking = await prisma.booking.findFirst({
       where: { uid: booking.uid },
@@ -180,7 +183,7 @@ test.describe("Reschedule for booking with seats", () => {
     await page.locator('[data-testid="day"][data-disabled="false"]').nth(1).click();
 
     // Validate that the number of seats its 10
-    expect(await page.locator("text=9 / 10 Seats available").count()).toEqual(0);
+    await expect(page.locator("text=9 / 10 Seats available")).toHaveCount(0);
   });
 
   test("Should cancel with seats but event should be still accessible and with one less attendee/seat", async ({
@@ -188,11 +191,10 @@ test.describe("Reschedule for booking with seats", () => {
     users,
     bookings,
   }) => {
-    const { user, booking } = await createUserWithSeatedEventAndAttendees({ users, bookings }, [
+    const { booking } = await createUserWithSeatedEventAndAttendees({ users, bookings }, [
       { name: "John First", email: "first+seats@cal.com", timeZone: "Europe/Berlin" },
       { name: "Jane Second", email: "second+seats@cal.com", timeZone: "Europe/Berlin" },
     ]);
-    await user.apiLogin();
 
     const bookingAttendees = await prisma.attendee.findMany({
       where: { bookingId: booking.id },
@@ -224,23 +226,26 @@ test.describe("Reschedule for booking with seats", () => {
     await page.goto(
       `/booking/${booking.uid}?cancel=true&allRemainingBookings=false&seatReferenceUid=${bookingSeats[0].referenceUid}`
     );
+    await page.waitForSelector("text=Reason for cancellation");
+
+    await expect(page.locator('text="Cancel event"')).toBeVisible();
+
+    await page.locator('[data-testid="cancel_reason"]').fill("Test reason");
 
     await page.locator('[data-testid="confirm_cancel"]').click();
 
-    await page.waitForLoadState("networkidle");
-
-    await expect(page).toHaveURL(/\/booking\/.*/);
+    await expect(page.locator("text=You are no longer attending this event")).toBeVisible();
 
     await page.goto(
       `/booking/${booking.uid}?cancel=true&allRemainingBookings=false&seatReferenceUid=${bookingSeats[1].referenceUid}`
     );
 
+    await page.locator('[data-testid="cancel_reason"]').fill("Test reason");
+
     // Page should not be 404
     await page.locator('[data-testid="confirm_cancel"]').click();
 
-    await page.waitForLoadState("networkidle");
-
-    await expect(page).toHaveURL(/\/booking\/.*/);
+    await expect(page.locator("text=You are no longer attending this event")).toBeVisible();
   });
 
   test("Should book with seats and hide attendees info from showAttendees true", async ({
@@ -399,14 +404,12 @@ test.describe("Reschedule for booking with seats", () => {
     await expect(reasonElement).toBeVisible();
 
     // expect to be redirected to reschedule page
-    await page.locator('[data-testid="confirm-reschedule-button"]').click();
+    await confirmReschedule(page);
 
     // should wait for URL but that path starts with booking/
     await page.waitForURL(/\/booking\/.*/);
 
     await expect(page).toHaveURL(/\/booking\/.*/);
-
-    await page.waitForLoadState("networkidle");
 
     const updatedBooking = await prisma.booking.findFirst({
       where: { id: booking.id },
@@ -452,6 +455,146 @@ test.describe("Reschedule for booking with seats", () => {
 
     // expect button reschedule
     await expect(page.locator('[data-testid="confirm-reschedule-button"]')).toHaveCount(1);
+  });
+
+  test("Host reschedule from /upcoming page should have rescheduleUid parameter set to bookingUid", async ({
+    page,
+    users,
+    bookings,
+  }) => {
+    const { user, booking } = await createUserWithSeatedEventAndAttendees({ users, bookings }, [
+      { name: "John First", email: "first+seats@cal.com", timeZone: "Europe/Berlin" },
+      { name: "Jane Second", email: "second+seats@cal.com", timeZone: "Europe/Berlin" },
+    ]);
+    await user.apiLogin();
+
+    const bookingAttendees = await prisma.attendee.findMany({
+      where: { bookingId: booking.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    });
+
+    const bookingSeats = bookingAttendees.map((attendee) => ({
+      bookingId: booking.id,
+      attendeeId: attendee.id,
+      referenceUid: uuidv4(),
+      data: {
+        responses: {
+          name: attendee.name,
+          email: attendee.email,
+        },
+      },
+    }));
+
+    await prisma.bookingSeat.createMany({
+      data: bookingSeats,
+    });
+
+    await page.goto("/bookings/upcoming");
+    await page.waitForSelector('[data-testid="bookings"]');
+
+    await page.locator('[data-testid="booking-actions-dropdown"]').nth(0).click();
+    await page.locator('[data-testid="reschedule"]').click();
+
+    await page.waitForURL((url) => {
+      const rescheduleUid = url.searchParams.get("rescheduleUid");
+      return !!rescheduleUid && rescheduleUid === booking.uid;
+    });
+  });
+
+  test("Second attendee reschedule from /upcoming page should use correct seatReferenceUid and show attendee info", async ({
+    page,
+    users,
+    bookings,
+  }) => {
+    const { booking } = await createUserWithSeatedEventAndAttendees({ users, bookings }, [
+      { name: "John First", email: "first+seats@cal.com", timeZone: "Europe/Berlin" },
+      { name: "Jane Second", email: "second+seats@cal.com", timeZone: "Europe/Berlin" },
+    ]);
+
+    const bookingAttendees = await prisma.attendee.findMany({
+      where: { bookingId: booking.id },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+      },
+    });
+
+    const bookingSeats = bookingAttendees.map((attendee) => ({
+      bookingId: booking.id,
+      attendeeId: attendee.id,
+      referenceUid: uuidv4(),
+      data: {
+        responses: {
+          name: attendee.name,
+          email: attendee.email,
+        },
+      },
+    }));
+
+    await prisma.bookingSeat.createMany({
+      data: bookingSeats,
+    });
+
+    const references = await prisma.bookingSeat.findMany({
+      where: { bookingId: booking.id },
+      orderBy: { id: "asc" },
+    });
+
+    const secondUser = await users.create({
+      name: "Jane Second",
+      email: "second+seats@cal.com",
+    });
+    await secondUser.apiLogin();
+
+    await page.goto("/bookings/upcoming");
+    await page.waitForSelector('[data-testid="bookings"]');
+
+    await page.locator('[data-testid="booking-actions-dropdown"]').nth(0).click();
+
+    // Wait for the reschedule link to be visible and have an href attribute
+    const rescheduleLink = page.locator('[data-testid="reschedule"]');
+    await expect(rescheduleLink).toBeVisible();
+    await expect(rescheduleLink).toHaveAttribute("href", /.+/);
+
+    const href = await rescheduleLink.getAttribute("href");
+    const url = new URL(href!, page.url());
+    const seatReferenceUid = url.searchParams.get("seatReferenceUid");
+    if (!seatReferenceUid) {
+      await page.reload();
+      await page.waitForSelector('[data-testid="bookings"]');
+      await page.locator('[data-testid="booking-actions-dropdown"]').nth(0).click();
+      await expect(rescheduleLink).toBeVisible();
+      await expect(rescheduleLink).toHaveAttribute("href", /.+/);
+    }
+    await rescheduleLink.click();
+    await expect(page.getByText("Seats available").first()).toBeVisible();
+
+    await page.waitForURL((url) => {
+      const rescheduleUid = url.searchParams.get("rescheduleUid");
+      return !!rescheduleUid && rescheduleUid === references[1].referenceUid;
+    });
+
+    await selectFirstAvailableTimeSlotNextMonth(page);
+
+    const nameElement = page.locator("input[name=name]");
+    const name = await nameElement.inputValue();
+    expect(name).toBe("Jane Second");
+
+    const emailElement = page.locator("input[name=email]");
+    const email = await emailElement.inputValue();
+    expect(email).toBe("second+seats@cal.com");
+
+    // Complete the reschedule
+    await confirmReschedule(page);
+
+    // Verify successful reschedule
+    await page.waitForURL(/\/booking\/.*/);
+    await expect(page).toHaveURL(/\/booking\/.*/);
   });
 
   // @TODO: force 404 when rescheduleUid is not found

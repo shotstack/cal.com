@@ -1,27 +1,33 @@
+/**
+ * PAGES ROUTER ONLY - Used exclusively by Next.js Pages Router (_app.tsx)
+ *
+ * Currently only serves the /router endpoint (routing forms redirect page).
+ * DO NOT add new features here - this file will be deprecated once we remove apps/web/pages.
+ *
+ * For App Router, use app-providers-app-dir.tsx instead.
+ */
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import { dir } from "i18next";
 import type { Session } from "next-auth";
-import { SessionProvider, useSession } from "next-auth/react";
-import { EventCollectionProvider } from "next-collect/client";
-import type { SSRConfig } from "next-i18next";
+import { useSession } from "next-auth/react";
 import { appWithTranslation } from "next-i18next";
+import type { SSRConfig } from "next-i18next/dist/types/types";
 import { ThemeProvider } from "next-themes";
 import type { AppProps as NextAppProps, AppProps as NextJsAppProps } from "next/app";
+import { NuqsAdapter } from "nuqs/adapters/next/pages";
 import type { ParsedUrlQuery } from "querystring";
 import type { PropsWithChildren, ReactNode } from "react";
 import { useEffect } from "react";
-import CacheProvider from "react-inlinesvg/provider";
 
 import { OrgBrandingProvider } from "@calcom/features/ee/organizations/context/provider";
 import DynamicHelpscoutProvider from "@calcom/features/ee/support/lib/helpscout/providerDynamic";
 import DynamicIntercomProvider from "@calcom/features/ee/support/lib/intercom/providerDynamic";
 import { FeatureProvider } from "@calcom/features/flags/context/provider";
 import { useFlags } from "@calcom/features/flags/hooks";
-import { MetaProvider } from "@calcom/ui";
 
 import useIsBookingPage from "@lib/hooks/useIsBookingPage";
+import { useNuqsParams } from "@lib/hooks/useNuqsParams";
 import type { WithLocaleProps } from "@lib/withLocale";
-import type { WithNonceProps } from "@lib/withNonce";
 
 import { useViewerI18n } from "@components/I18nLanguageHandler";
 
@@ -34,13 +40,11 @@ const I18nextAdapter = appWithTranslation<
 // Workaround for https://github.com/vercel/next.js/issues/8592
 export type AppProps = Omit<
   NextAppProps<
-    WithLocaleProps<
-      WithNonceProps<{
-        themeBasis?: string;
-        session: Session;
-        i18n?: SSRConfig;
-      }>
-    >
+    WithLocaleProps<{
+      themeBasis?: string;
+      session: Session;
+      i18n?: SSRConfig;
+    }>
   >,
   "Component"
 > & {
@@ -66,12 +70,7 @@ const getEmbedNamespace = (query: ParsedUrlQuery) => {
   return typeof window !== "undefined" ? window.getEmbedNamespace() : (query.embed as string) || null;
 };
 
-// We dont need to pass nonce to the i18n provider - this was causing x2-x3 re-renders on a hard refresh
-type AppPropsWithoutNonce = Omit<AppPropsWithChildren, "pageProps"> & {
-  pageProps: Omit<AppPropsWithChildren["pageProps"], "nonce">;
-};
-
-const CustomI18nextProvider = (props: AppPropsWithoutNonce) => {
+const CustomI18nextProvider = (props: AppPropsWithChildren) => {
   /**
    * i18n should never be clubbed with other queries, so that it's caching can be managed independently.
    **/
@@ -135,7 +134,7 @@ const enum ThemeSupport {
 
 type CalcomThemeProps = PropsWithChildren<
   Pick<AppProps, "router"> &
-    Pick<AppProps["pageProps"], "nonce" | "themeBasis"> &
+    Pick<AppProps["pageProps"], "themeBasis"> &
     Pick<AppProps["Component"], "isBookingPage" | "isThemeSupported">
 >;
 const CalcomThemeProvider = (props: CalcomThemeProps) => {
@@ -145,10 +144,10 @@ const CalcomThemeProvider = (props: CalcomThemeProps) => {
   const embedNamespace = getEmbedNamespace(props.router.query);
   const isEmbedMode = typeof embedNamespace === "string";
 
-  const themeProviderProps = getThemeProviderProps({ props, isEmbedMode, embedNamespace });
+  const { key, ...themeProviderProps } = getThemeProviderProps({ props, isEmbedMode, embedNamespace });
 
   return (
-    <ThemeProvider {...themeProviderProps}>
+    <ThemeProvider key={key} {...themeProviderProps}>
       {/* Embed Mode can be detected reliably only on client side here as there can be static generated pages as well which can't determine if it's embed mode at backend */}
       {/* color-scheme makes background:transparent not work in iframe which is required by embed. */}
       {typeof window !== "undefined" && !isEmbedMode && (
@@ -182,7 +181,7 @@ const CalcomThemeProvider = (props: CalcomThemeProps) => {
  * - There is a side effect of so many factors in `storageKey` that many localStorage keys will be created if a user goes through all these scenarios(e.g like booking a lot of different users)
  * - Some might recommend disabling localStorage persistence but that doesn't give good UX as then we would default to light theme always for a few seconds before switching to dark theme(if that's the user's preference).
  * - We can't disable [`storage`](https://developer.mozilla.org/en-US/docs/Web/API/Window/storage_event) event handling as well because changing theme in one tab won't change the theme without refresh in other tabs. That's again a bad UX
- * - Theme flickering becomes infinitely ongoing in case of embeds because of the browser's delay in processing `storage` event within iframes. Consider two embeds simulatenously opened with pages A and B. Note the timeline and keep in mind that it happened
+ * - Theme flickering becomes infinitely ongoing in case of embeds because of the browser's delay in processing `storage` event within iframes. Consider two embeds simultaneously opened with pages A and B. Note the timeline and keep in mind that it happened
  *  because 'setItem(A)' and 'Receives storageEvent(A)' allowed executing setItem(B) in b/w because of the delay.
  *    - t1 -> setItem(A) & Fires storageEvent(A) - On Page A) - Current State(A)
  *    - t2 -> setItem(B) & Fires storageEvent(B) - On Page B) - Current State(B)
@@ -247,7 +246,6 @@ function getThemeProviderProps({
     storageKey,
     forcedTheme,
     themeSupport,
-    nonce: props.nonce,
     enableColorScheme: false,
     enableSystem: themeSupport !== ThemeSupport.None,
     // next-themes doesn't listen to changes on storageKey. So we need to force a re-render when storageKey changes
@@ -273,44 +271,35 @@ function OrgBrandProvider({ children }: { children: React.ReactNode }) {
 }
 
 const AppProviders = (props: AppPropsWithChildren) => {
-  // No need to have intercom on public pages - Good for Page Performance
   const isBookingPage = useIsBookingPage();
-  const { pageProps, ...rest } = props;
-
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { nonce, ...restPageProps } = pageProps;
-  const propsWithoutNonce = {
-    pageProps: {
-      ...restPageProps,
-    },
-    ...rest,
-  };
+  const _isBookingPage =
+    (typeof props.Component.isBookingPage === "function"
+      ? props.Component.isBookingPage({ router: props.router })
+      : props.Component.isBookingPage) || isBookingPage;
+  const nuqsParams = useNuqsParams();
 
   const RemainingProviders = (
-    <EventCollectionProvider options={{ apiPath: "/api/collect-events" }}>
-      <SessionProvider session={pageProps.session ?? undefined}>
-        <CustomI18nextProvider {...propsWithoutNonce}>
-          <TooltipProvider>
-            {/* color-scheme makes background:transparent not work which is required by embed. We need to ensure next-theme adds color-scheme to `body` instead of `html`(https://github.com/pacocoursey/next-themes/blob/main/src/index.tsx#L74). Once that's done we can enable color-scheme support */}
-            <CalcomThemeProvider
-              themeBasis={props.pageProps.themeBasis}
-              nonce={props.pageProps.nonce}
-              isThemeSupported={props.Component.isThemeSupported}
-              isBookingPage={props.Component.isBookingPage || isBookingPage}
-              router={props.router}>
-              <FeatureFlagsProvider>
-                <OrgBrandProvider>
-                  {/* @ts-expect-error FIXME remove this comment when upgrading typescript to v5 */}
-                  <CacheProvider>
-                    <MetaProvider>{props.children}</MetaProvider>
-                  </CacheProvider>
-                </OrgBrandProvider>
-              </FeatureFlagsProvider>
-            </CalcomThemeProvider>
-          </TooltipProvider>
-        </CustomI18nextProvider>
-      </SessionProvider>
-    </EventCollectionProvider>
+    <CustomI18nextProvider {...props}>
+      <TooltipProvider>
+        <CalcomThemeProvider
+          themeBasis={props.pageProps.themeBasis}
+          isThemeSupported={props.Component.isThemeSupported}
+          isBookingPage={props.Component.isBookingPage || isBookingPage}
+          router={props.router}>
+          <NuqsAdapter {...nuqsParams}>
+            <FeatureFlagsProvider>
+              {_isBookingPage ? (
+                <OrgBrandProvider>{props.children}</OrgBrandProvider>
+              ) : (
+                <DynamicIntercomProvider>
+                  <OrgBrandProvider>{props.children}</OrgBrandProvider>
+                </DynamicIntercomProvider>
+              )}
+            </FeatureFlagsProvider>
+          </NuqsAdapter>
+        </CalcomThemeProvider>
+      </TooltipProvider>
+    </CustomI18nextProvider>
   );
 
   if (isBookingPage) {
@@ -318,9 +307,9 @@ const AppProviders = (props: AppPropsWithChildren) => {
   }
 
   return (
-    <DynamicHelpscoutProvider>
-      <DynamicIntercomProvider>{RemainingProviders}</DynamicIntercomProvider>
-    </DynamicHelpscoutProvider>
+    <>
+      <DynamicHelpscoutProvider>{RemainingProviders}</DynamicHelpscoutProvider>
+    </>
   );
 };
 

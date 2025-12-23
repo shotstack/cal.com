@@ -1,20 +1,21 @@
-import type { App_RoutingForms_Form } from "@prisma/client";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { getSession } from "next-auth/react";
 
-import { entityPrismaWhereClause, canEditEntity } from "@calcom/lib/entityPermissionUtils";
+import {
+  entityPrismaWhereClause,
+  canEditEntity,
+} from "@calcom/features/pbac/lib/entityPermissionUtils.server";
+import { sanitizeValue } from "@calcom/lib/csvUtils";
 import prisma from "@calcom/prisma";
+import type { App_RoutingForms_Form } from "@calcom/prisma/client";
 
 import { getSerializableForm } from "../../lib/getSerializableForm";
+import { getHumanReadableFieldResponseValue } from "../../lib/responseData/getHumanReadableFieldResponseValue";
 import type { FormResponse, SerializableForm } from "../../types/types";
 
-function escapeCsvText(str: string) {
-  return str.replace(/,/, "%2C");
-}
-async function* getResponses(
-  formId: string,
-  headerFields: NonNullable<SerializableForm<App_RoutingForms_Form>["fields"]>
-) {
+type Fields = NonNullable<SerializableForm<App_RoutingForms_Form>["fields"]>;
+
+async function* getResponses(formId: string, fields: Fields) {
   let responses;
   let skip = 0;
   // Keep it small enough to be in Vercel limits of Serverless Function in terms of memory.
@@ -34,16 +35,14 @@ async function* getResponses(
     responses.forEach((response) => {
       const fieldResponses = response.response as FormResponse;
       const csvCells: string[] = [];
-      headerFields.forEach((headerField) => {
-        const fieldResponse = fieldResponses[headerField.id];
+      fields.forEach((field) => {
+        const fieldResponse = fieldResponses[field.id];
         const value = fieldResponse?.value || "";
-        let serializedValue = "";
-        if (value instanceof Array) {
-          serializedValue = value.map((val) => escapeCsvText(val)).join(" | ");
-        } else {
-          // value can be a number as well for type Number field
-          serializedValue = escapeCsvText(String(value));
-        }
+        const humanReadableResponseValue = getHumanReadableFieldResponseValue({ field, value });
+        const readableValues = Array.isArray(humanReadableResponseValue)
+          ? humanReadableResponseValue
+          : [humanReadableResponseValue];
+        const serializedValue = readableValues.map((value) => sanitizeValue(value)).join(" | ");
         csvCells.push(serializedValue);
       });
       csvCells.push(response.createdAt.toISOString());
@@ -79,20 +78,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       id: formId,
       ...entityPrismaWhereClause({ userId: user.id }),
     },
-    include: {
-      team: {
-        select: {
-          members: true,
-        },
-      },
-    },
   });
 
   if (!form) {
     return res.status(404).json({ message: "Form not found or unauthorized" });
   }
 
-  if (!canEditEntity(form, user.id)) {
+  if (!(await canEditEntity(form, user.id))) {
     return res.status(404).json({ message: "Form not found or unauthorized" });
   }
 

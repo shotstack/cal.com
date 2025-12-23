@@ -1,9 +1,12 @@
 import type { NextApiRequest } from "next";
 
-import { defaultResponder } from "@calcom/lib/server";
+import { ErrorCode } from "@calcom/lib/errorCodes";
+import { ErrorWithCode } from "@calcom/lib/errors";
+import { defaultResponder } from "@calcom/lib/server/defaultResponder";
 import prisma from "@calcom/prisma";
 
 import { schemaBookingReadPublic } from "~/lib/validations/booking";
+import { schemaQuerySingleOrMultipleExpand } from "~/lib/validations/shared/queryExpandRelations";
 import { schemaQueryIdParseInt } from "~/lib/validations/shared/queryIdTransformParseInt";
 
 /**
@@ -89,10 +92,30 @@ import { schemaQueryIdParseInt } from "~/lib/validations/shared/queryIdTransform
 export async function getHandler(req: NextApiRequest) {
   const { query } = req;
   const { id } = schemaQueryIdParseInt.parse(query);
+
+  const queryFilterForExpand = schemaQuerySingleOrMultipleExpand.parse(req.query.expand);
+  const expand = Array.isArray(queryFilterForExpand)
+    ? queryFilterForExpand
+    : queryFilterForExpand
+    ? [queryFilterForExpand]
+    : [];
   const booking = await prisma.booking.findUnique({
     where: { id },
-    include: { attendees: true, user: true, payment: true },
+    include: {
+      // eslint-disable-next-line @calcom/eslint/no-prisma-include-true
+      attendees: true,
+      // eslint-disable-next-line @calcom/eslint/no-prisma-include-true
+      user: true,
+      // eslint-disable-next-line @calcom/eslint/no-prisma-include-true
+      payment: true,
+      eventType: expand.includes("team") ? { include: { team: true } } : false,
+    },
   });
+
+  if (!booking) {
+    throw new ErrorWithCode(ErrorCode.BookingNotFound, "Booking not found");
+  }
+
   return { booking: schemaBookingReadPublic.parse(booking) };
 }
 

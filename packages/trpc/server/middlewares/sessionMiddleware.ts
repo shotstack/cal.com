@@ -1,10 +1,12 @@
+import { setUser as SentrySetUser } from "@sentry/nextjs";
 import type { Session } from "next-auth";
 
+import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
+import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
-import { ProfileRepository } from "@calcom/lib/server/repository/profile";
-import { UserRepository } from "@calcom/lib/server/repository/user";
+import prisma from "@calcom/prisma";
 import { teamMetadataSchema, userMetadata } from "@calcom/prisma/zod-utils";
 
 import { TRPCError } from "@trpc/server";
@@ -15,7 +17,6 @@ import { middleware } from "../trpc";
 type Maybe<T> = T | null | undefined;
 
 export async function getUserFromSession(ctx: TRPCContextInner, session: Maybe<Session>) {
-  const { prisma } = ctx;
   if (!session) {
     return null;
   }
@@ -24,55 +25,8 @@ export async function getUserFromSession(ctx: TRPCContextInner, session: Maybe<S
     return null;
   }
 
-  const userFromDb = await prisma.user.findUnique({
-    where: {
-      id: session.user.id,
-      // Locked users can't login
-      locked: false,
-    },
-    select: {
-      id: true,
-      username: true,
-      name: true,
-      email: true,
-      emailVerified: true,
-      bio: true,
-      avatarUrl: true,
-      timeZone: true,
-      weekStart: true,
-      startTime: true,
-      endTime: true,
-      defaultScheduleId: true,
-      bufferTime: true,
-      theme: true,
-      appTheme: true,
-      createdDate: true,
-      hideBranding: true,
-      twoFactorEnabled: true,
-      disableImpersonation: true,
-      identityProvider: true,
-      identityProviderId: true,
-      brandColor: true,
-      darkBrandColor: true,
-      movedToProfileId: true,
-      selectedCalendars: {
-        select: {
-          externalId: true,
-          integration: true,
-        },
-      },
-      completedOnboarding: true,
-      destinationCalendar: true,
-      locale: true,
-      timeFormat: true,
-      trialEndsAt: true,
-      metadata: true,
-      role: true,
-      allowDynamicBooking: true,
-      allowSEOIndexing: true,
-      receiveMonthlyDigestEmail: true,
-    },
-  });
+  const userRepo = new UserRepository(prisma);
+  const userFromDb = await userRepo.findUnlockedUserForSession({ userId: session.user.id });
 
   // some hacks to make sure `username` and `email` are never inferred as `null`
   if (!userFromDb) {
@@ -81,7 +35,7 @@ export async function getUserFromSession(ctx: TRPCContextInner, session: Maybe<S
 
   const upId = session.upId;
 
-  const user = await UserRepository.enrichUserWithTheProfile({
+  const user = await userRepo.enrichUserWithTheProfile({
     user: userFromDb,
     upId,
   });
@@ -91,62 +45,57 @@ export async function getUserFromSession(ctx: TRPCContextInner, session: Maybe<S
     safeStringify({ user, userFromDb, upId })
   );
 
-  const { email, username, id } = user;
-  if (!email || !id) {
-    return null;
-  }
+    const { email, username, id, uuid } = user;
+    if (!email || !id) {
+      return null; // should we return null here?
+    }
 
   const userMetaData = userMetadata.parse(user.metadata || {});
   const orgMetadata = teamMetadataSchema.parse(user.profile?.organization?.metadata || {});
   // This helps to prevent reaching the 4MB payload limit by avoiding base64 and instead passing the avatar url
 
   const locale = user?.locale ?? ctx.locale;
-
-  const isOrgAdmin = !!user.profile?.organization?.members.filter(
-    (member) => (member.role === "ADMIN" || member.role === "OWNER") && member.userId === user.id
-  ).length;
+  const { members = [], ..._organization } = user.profile?.organization || {};
+  const isOrgAdmin = members.some((member: { role: string }) => ["OWNER", "ADMIN"].includes(member.role));
 
   if (isOrgAdmin) {
     logger.debug("User is an org admin", safeStringify({ userId: user.id }));
   } else {
     logger.debug("User is not an org admin", safeStringify({ userId: user.id }));
   }
-  // Want to reduce the amount of data being sent
-  if (isOrgAdmin && user.profile?.organization?.members) {
-    user.profile.organization.members = [];
-  }
-
   const organization = {
-    ...user.profile?.organization,
+    ..._organization,
     id: user.profile?.organization?.id ?? null,
     isOrgAdmin,
     metadata: orgMetadata,
     requestedSlug: orgMetadata?.requestedSlug ?? null,
   };
 
-  return {
-    ...user,
-    avatar: `${WEBAPP_URL}/${user.username}/avatar.png?${organization.id}` && `orgId=${organization.id}`,
-    // TODO: OrgNewSchema - later -  We could consolidate the props in user.profile?.organization as organization is a profile thing now.
-    organization,
-    organizationId: organization.id,
-    id,
-    email,
-    username,
-    locale,
-    defaultBookerLayouts: userMetaData?.defaultBookerLayouts || null,
-  };
+    return {
+      ...user,
+      avatar: `${WEBAPP_URL}/${user.username}/avatar.png${organization.id ? `?orgId=${organization.id}` : ""}`,
+      // TODO: OrgNewSchema - later -  We could consolidate the props in user.profile?.organization as organization is a profile thing now.
+      organization,
+      organizationId: organization.id,
+      id,
+      uuid,
+      email,
+      username,
+      locale,
+      defaultBookerLayouts: userMetaData?.defaultBookerLayouts || null,
+      requiresBookerEmailVerification: user.requiresBookerEmailVerification,
+    };
 }
 
 export type UserFromSession = Awaited<ReturnType<typeof getUserFromSession>>;
 
-const getSession = async (ctx: TRPCContextInner) => {
-  const { req, res } = ctx;
+export const getSession = async (ctx: TRPCContextInner) => {
+  const { req } = ctx;
   const { getServerSession } = await import("@calcom/features/auth/lib/getServerSession");
-  return req ? await getServerSession({ req, res }) : null;
+  return req ? await getServerSession({ req }) : null;
 };
 
-const getUserSession = async (ctx: TRPCContextInner) => {
+export const getUserSession = async (ctx: TRPCContextInner) => {
   /**
    * It is possible that the session and user have already been added to the context by a previous middleware
    * or when creating the context
@@ -188,16 +137,6 @@ const getUserSession = async (ctx: TRPCContextInner) => {
   return { user, session: sessionWithUpId };
 };
 
-const sessionMiddleware = middleware(async ({ ctx, next }) => {
-  const middlewareStart = performance.now();
-  const { user, session } = await getUserSession(ctx);
-  const middlewareEnd = performance.now();
-  logger.debug("Perf:t.sessionMiddleware", middlewareEnd - middlewareStart);
-  return next({
-    ctx: { user, session },
-  });
-});
-
 export const isAuthed = middleware(async ({ ctx, next }) => {
   const middlewareStart = performance.now();
 
@@ -209,6 +148,8 @@ export const isAuthed = middleware(async ({ ctx, next }) => {
   if (!user || !session) {
     throw new TRPCError({ code: "UNAUTHORIZED" });
   }
+
+  SentrySetUser({ id: user.id });
 
   return next({
     ctx: { user, session },
@@ -231,5 +172,3 @@ export const isOrgAdminMiddleware = isAuthed.unstable_pipe(({ ctx, next }) => {
   }
   return next({ ctx: { user: user } });
 });
-
-export default sessionMiddleware;

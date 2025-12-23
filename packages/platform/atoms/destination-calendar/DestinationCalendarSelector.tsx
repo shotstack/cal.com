@@ -1,18 +1,21 @@
+"use client";
+
 import { useState, useEffect, useMemo } from "react";
 
 import { SingleValueComponent } from "@calcom/features/calendars/DestinationCalendarSelector";
 import { OptionComponent } from "@calcom/features/calendars/DestinationCalendarSelector";
-import { classNames } from "@calcom/lib";
+import type { ConnectedDestinationCalendars } from "@calcom/features/calendars/lib/getConnectedDestinationCalendars";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import type { ConnectedDestinationCalendars } from "@calcom/platform-libraries";
-import { Badge, Select } from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+import { Badge } from "@calcom/ui/components/badge";
+import { Select } from "@calcom/ui/components/form";
 
 import { getPlaceholderContent } from "../lib/getPlaceholderContent";
 
 export type DestinationCalendarProps = {
   connectedCalendars: ConnectedDestinationCalendars["connectedCalendars"];
   destinationCalendar: ConnectedDestinationCalendars["destinationCalendar"];
-  onChange: (value: { externalId: string; integration: string }) => void;
+  onChange: (value: { externalId: string; integration: string; delegationCredentialId?: string }) => void;
   isPending?: boolean;
   hidePlaceholder?: boolean;
   value: string | undefined;
@@ -35,6 +38,7 @@ export const DestinationCalendarSelector = ({
     value: string;
     label: string;
     subtitle: string;
+    delegationCredentialId?: string;
   } | null>(null);
 
   useEffect(() => {
@@ -50,7 +54,7 @@ export const DestinationCalendarSelector = ({
 
       setSelectedOption({
         value: `${selected.integration}:${selected.externalId}`,
-        label: `${selected.name} ` || "",
+        label: selected.name ? `${selected.name} ` : "",
         subtitle: `(${selectedIntegration?.integration.title?.replace(/calendar/i, "")} - ${
           selectedIntegration?.primary?.name
         })`,
@@ -75,6 +79,7 @@ export const DestinationCalendarSelector = ({
               selectedCalendar?.primary?.name
             })`,
             value: `${cal.integration}:${cal.externalId}`,
+            delegationCredentialId: cal.delegationCredentialId || undefined,
           })),
       })) ?? []
     );
@@ -99,23 +104,18 @@ export const DestinationCalendarSelector = ({
         }
         options={options}
         styles={{
-          placeholder: (styles) => ({
-            ...styles,
-            ...getPlaceholderContent(hidePlaceholder, `'${t("create_events_on")}:'`),
-          }),
-          singleValue: (styles) => ({
-            ...styles,
-            ...getPlaceholderContent(hidePlaceholder, `'${t("create_events_on")}:'`),
-          }),
-          control: (defaultStyles) => {
-            return {
-              ...defaultStyles,
-              "@media only screen and (min-width: 640px)": {
-                ...(defaultStyles["@media only screen and (min-width: 640px)"] as object),
-                maxWidth,
-              },
-            };
-          },
+          placeholder: (styles) =>
+            Object.assign({}, styles, getPlaceholderContent(hidePlaceholder, `'${t("create_events_on")}:'`)),
+          singleValue: (styles) =>
+            Object.assign({}, styles, getPlaceholderContent(hidePlaceholder, `'${t("create_events_on")}:'`)),
+          control: (defaultStyles) =>
+            Object.assign({}, defaultStyles, {
+              "@media only screen and (min-width: 640px)": Object.assign(
+                {},
+                defaultStyles["@media only screen and (min-width: 640px)"] as object,
+                { maxWidth }
+              ),
+            }),
         }}
         isSearchable={false}
         className={classNames(
@@ -133,6 +133,7 @@ export const DestinationCalendarSelector = ({
           onChange({
             integration,
             externalId,
+            delegationCredentialId: newValue.delegationCredentialId,
           });
         }}
         isLoading={isPending}

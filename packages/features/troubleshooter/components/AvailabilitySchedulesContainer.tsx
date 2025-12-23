@@ -1,5 +1,7 @@
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Badge, Button, Switch } from "@calcom/ui";
+import { Badge } from "@calcom/ui/components/badge";
+import { Button } from "@calcom/ui/components/button";
+import { Switch } from "@calcom/ui/components/form";
 
 import { TroubleshooterListItemContainer } from "./TroubleshooterListItemContainer";
 
@@ -27,7 +29,7 @@ function AvailabiltyItem() {
 export function AvailabiltySchedulesContainer() {
   const { t } = useLocale();
   return (
-    <div className="flex flex-col space-y-3">
+    <div className="flex flex-col stack-y-3">
       <p className="text-sm font-medium leading-none">{t("availabilty_schedules")}</p>
       <AvailabiltyItem />
       <Button color="secondary" className="justify-center gap-2">

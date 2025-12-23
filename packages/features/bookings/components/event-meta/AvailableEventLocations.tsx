@@ -4,11 +4,12 @@ import type {
   LocationObject,
 } from "@calcom/app-store/locations";
 import { getEventLocationType, getTranslatedLocation } from "@calcom/app-store/locations";
-import { useIsPlatform } from "@calcom/atoms/monorepo";
-import { classNames } from "@calcom/lib";
+import { useIsPlatform } from "@calcom/atoms/hooks/useIsPlatform";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import invertLogoOnDark from "@calcom/lib/invertLogoOnDark";
-import { Icon, Tooltip } from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+import { Icon } from "@calcom/ui/components/icon";
+import { Tooltip } from "@calcom/ui/components/tooltip";
 
 const excludeNullValues = (value: unknown) => !!value;
 
@@ -21,20 +22,10 @@ function RenderIcon({
 }) {
   const isPlatform = useIsPlatform();
 
-  if (isPlatform) {
-    if (eventLocationType.type === "conferencing") return <Icon name="video" className="me-[10px] h-4 w-4" />;
-    if (eventLocationType.type === "attendeeInPerson" || eventLocationType.type === "inPerson")
-      return <Icon name="map-pin" className="me-[10px] h-4 w-4" />;
-    if (eventLocationType.type === "phone" || eventLocationType.type === "userPhone")
-      return <Icon name="phone" className="me-[10px] h-4 w-4" />;
-    if (eventLocationType.type === "link") return <Icon name="link" className="me-[10px] h-4 w-4" />;
-    return <Icon name="book-user" className="me-[10px] h-4 w-4" />;
-  }
-
   return (
     <img
-      src={eventLocationType.iconUrl}
-      className={classNames(invertLogoOnDark(eventLocationType?.iconUrl, false), "me-[10px] h-4 w-4")}
+      src={`${isPlatform ? process.env.NEXT_PUBLIC_WEBAPP_URL : ""}${eventLocationType.iconUrl}`}
+      className={classNames(invertLogoOnDark(eventLocationType?.iconUrl, isTooltip), "me-[10px] h-4 w-4")}
       alt={`${eventLocationType.label} icon`}
     />
   );
@@ -44,7 +35,7 @@ function RenderLocationTooltip({ locations }: { locations: LocationObject[] }) {
   const { t } = useLocale();
 
   return (
-    <div className="my-2 me-2 flex w-full flex-col space-y-3 break-words">
+    <div className="my-2 me-2 flex w-full flex-col stack-y-3 wrap-break-word">
       <p>{t("select_on_next_step")}</p>
       {locations.map(
         (
@@ -56,7 +47,8 @@ function RenderLocationTooltip({ locations }: { locations: LocationObject[] }) {
           if (!eventLocationType) {
             return null;
           }
-          const translatedLocation = getTranslatedLocation(location, eventLocationType, t);
+          const translatedLocation =
+            location.customLabel || getTranslatedLocation(location, eventLocationType, t);
           return (
             <div key={`${location.type}-${index}`} className="font-sm flex flex-row items-center">
               <RenderIcon eventLocationType={eventLocationType} isTooltip />
@@ -83,11 +75,8 @@ export function AvailableEventLocations({ locations }: { locations: LocationObje
         // It's possible that the location app got uninstalled
         return null;
       }
-      if (eventLocationType.variable === "hostDefault") {
-        return null;
-      }
 
-      const translatedLocation = getTranslatedLocation(location, eventLocationType, t);
+      const locationName = location?.customLabel || getTranslatedLocation(location, eventLocationType, t);
 
       return (
         <div key={`${location.type}-${index}`} className="flex flex-row items-center text-sm font-medium">
@@ -96,8 +85,8 @@ export function AvailableEventLocations({ locations }: { locations: LocationObje
           ) : (
             <RenderIcon eventLocationType={eventLocationType} isTooltip={false} />
           )}
-          <Tooltip content={translatedLocation}>
-            <p className="line-clamp-1">{translatedLocation}</p>
+          <Tooltip content={locationName}>
+            <p className="line-clamp-1">{locationName}</p>
           </Tooltip>
         </div>
       );
@@ -126,7 +115,7 @@ export function AvailableEventLocations({ locations }: { locations: LocationObje
       </Tooltip>
     </div>
   ) : filteredLocations.length === 1 ? (
-    <div className="text-default mr-6 flex w-full flex-col space-y-4 break-words text-sm rtl:mr-2">
+    <div className="text-default mr-6 flex w-full flex-col stack-y-4 wrap-break-word text-sm rtl:mr-2">
       {filteredLocations}
     </div>
   ) : null;

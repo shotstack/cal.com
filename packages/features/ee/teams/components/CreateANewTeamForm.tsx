@@ -1,11 +1,20 @@
+"use client";
+
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
+import posthog from "posthog-js";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import slugify from "@calcom/lib/slugify";
 import type { RouterOutputs } from "@calcom/trpc/react";
 import { trpc } from "@calcom/trpc/react";
-import { Alert, Button, DialogFooter, Form, TextField } from "@calcom/ui";
+import { Alert } from "@calcom/ui/components/alert";
+import { Button } from "@calcom/ui/components/button";
+import { DialogFooter } from "@calcom/ui/components/dialog";
+import { Form } from "@calcom/ui/components/form";
+import { TextField } from "@calcom/ui/components/form";
+import { revalidateEventTypesList } from "@calcom/web/app/(use-page-wrapper)/(main-nav)/event-types/actions";
+import { revalidateTeamsList } from "@calcom/web/app/(use-page-wrapper)/(main-nav)/teams/actions";
 
 import { useOrgBranding } from "../../organizations/context/provider";
 import { subdomainSuffix } from "../../organizations/lib/orgDomains";
@@ -31,8 +40,16 @@ export const CreateANewTeamForm = (props: CreateANewTeamFormProps) => {
     },
   });
 
+  const utils = trpc.useUtils();
+
   const createTeamMutation = trpc.viewer.teams.create.useMutation({
-    onSuccess: (data) => onSuccess(data),
+    onSuccess: async (data) => {
+      await utils.viewer.eventTypes.getUserEventGroups.invalidate();
+      revalidateEventTypesList();
+      revalidateTeamsList();
+      onSuccess(data);
+    },
+
     onError: (err) => {
       if (err.message === "team_url_taken") {
         newTeamFormMethods.setError("slug", { type: "custom", message: t("url_taken") });
@@ -69,6 +86,10 @@ export const CreateANewTeamForm = (props: CreateANewTeamFormProps) => {
         form={newTeamFormMethods}
         handleSubmit={(v) => {
           if (!createTeamMutation.isPending) {
+            posthog.capture("create_team_checkout_clicked", {
+              team_name: v.name,
+              team_slug: v.slug,
+            });
             setServerErrorMessage(null);
             createTeamMutation.mutate(v);
           }
@@ -86,6 +107,7 @@ export const CreateANewTeamForm = (props: CreateANewTeamFormProps) => {
             defaultValue=""
             rules={{
               required: t("must_enter_team_name"),
+              validate: (value) => value.trim().length > 0 || t("must_enter_team_name")
             }}
             render={({ field: { value } }) => (
               <>
@@ -120,7 +142,6 @@ export const CreateANewTeamForm = (props: CreateANewTeamFormProps) => {
             rules={{ required: t("team_url_required") }}
             render={({ field: { value } }) => (
               <TextField
-                className="mt-2"
                 name="slug"
                 placeholder="acme"
                 label={t("team_url")}
@@ -132,7 +153,7 @@ export const CreateANewTeamForm = (props: CreateANewTeamFormProps) => {
                 value={value}
                 defaultValue={value}
                 onChange={(e) => {
-                  newTeamFormMethods.setValue("slug", slugify(e?.target.value, true), {
+                  newTeamFormMethods.setValue("slug", slugify(e?.target.value, true).replace(/\./g, ""), {
                     shouldTouch: true,
                   });
                   newTeamFormMethods.clearErrors("slug");

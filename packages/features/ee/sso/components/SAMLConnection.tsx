@@ -2,9 +2,14 @@ import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
 
 import type { SSOConnection } from "@calcom/ee/sso/lib/saml";
+import { Dialog } from "@calcom/features/components/controlled-dialog";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import { Button, DialogFooter, Form, showToast, TextArea, Dialog, DialogContent } from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { DialogContent, DialogFooter } from "@calcom/ui/components/dialog";
+import { Form } from "@calcom/ui/components/form";
+import { TextArea } from "@calcom/ui/components/form";
+import { showToast } from "@calcom/ui/components/toast";
 
 interface FormValues {
   metadata: string;
@@ -30,7 +35,7 @@ export default function SAMLConnection({
           </p>
         </div>
         {!connection && (
-          <div className="flex-shrink-0 pt-3 sm:ml-auto sm:pl-3 sm:pt-0">
+          <div className="shrink-0 pt-3 sm:ml-auto sm:pl-3 sm:pt-0">
             <Button color="secondary" onClick={() => setOpenModal(true)}>
               Configure
             </Button>

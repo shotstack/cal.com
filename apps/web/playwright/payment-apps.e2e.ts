@@ -1,12 +1,18 @@
 import { expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 import prisma from "@calcom/prisma";
 
 import { test } from "./lib/fixtures";
-import { selectFirstAvailableTimeSlotNextMonth } from "./lib/testUtils";
+import { selectFirstAvailableTimeSlotNextMonth, submitAndWaitForResponse } from "./lib/testUtils";
 
 test.describe.configure({ mode: "parallel" });
 test.afterEach(({ users }) => users.deleteAll());
+
+async function goToAppsTab(page: Page, eventTypeId?: number) {
+  await page.goto(`event-types/${eventTypeId}?tabName=apps`);
+  await expect(page.getByTestId("vertical-tab-apps")).toHaveAttribute("aria-current", "page");
+}
 
 test.describe("Payment app", () => {
   test("Should be able to edit alby price, currency", async ({ page, users }) => {
@@ -29,25 +35,27 @@ test.describe("Payment app", () => {
       },
     });
 
-    await page.goto(`event-types/${paymentEvent?.id}?tabName=apps`);
+    await goToAppsTab(page, paymentEvent?.id);
 
     await page.locator("#event-type-form").getByRole("switch").click();
     await page.getByPlaceholder("Price").click();
     await page.getByPlaceholder("Price").fill("200");
     await page.getByText("SatoshissatsCurrencyBTCPayment optionCollect payment on booking").click();
-    await page.getByTestId("update-eventtype").click();
+    await submitAndWaitForResponse(page, "/api/trpc/eventTypesHeavy/update?batch=1", {
+      action: () => page.locator("[data-testid=update-eventtype]").click(),
+    });
 
     await page.goto(`${user.username}/${paymentEvent?.slug}`);
 
     // expect 200 sats to be displayed in page
-    expect(await page.locator("text=200 sats").first()).toBeTruthy();
+    await expect(page.locator("text=200 sats").first()).toBeVisible();
 
     await selectFirstAvailableTimeSlotNextMonth(page);
-    expect(await page.locator("text=200 sats").first()).toBeTruthy();
+    await expect(page.locator("text=200 sats").first()).toBeVisible();
 
     // go to /event-types and check if the price is 200 sats
     await page.goto(`event-types/`);
-    expect(await page.locator("text=200 sats").first()).toBeTruthy();
+    await expect(page.locator("text=200 sats").first()).toBeVisible();
   });
 
   test("Should be able to edit stripe price, currency", async ({ page, users }) => {
@@ -73,7 +81,7 @@ test.describe("Payment app", () => {
       },
     });
 
-    await page.goto(`event-types/${paymentEvent?.id}?tabName=apps`);
+    await goToAppsTab(page, paymentEvent?.id);
     await page.locator("#event-type-form").getByRole("switch").click();
     await page.getByTestId("stripe-currency-select").click();
     await page.getByTestId("select-option-usd").click();
@@ -113,7 +121,7 @@ test.describe("Payment app", () => {
       },
     });
 
-    await page.goto(`event-types/${paymentEvent?.id}?tabName=apps`);
+    await goToAppsTab(page, paymentEvent?.id);
 
     await page.locator("#event-type-form").getByRole("switch").click();
 
@@ -121,7 +129,7 @@ test.describe("Payment app", () => {
     await page.getByPlaceholder("Price").fill("150");
 
     await page.getByTestId("paypal-currency-select").click();
-    await page.locator("#react-select-2-option-13").click();
+    await page.getByTestId("select-option-MXN").click();
 
     await page.getByTestId("paypal-payment-option-select").click();
 
@@ -156,7 +164,7 @@ test.describe("Payment app", () => {
       },
     });
 
-    await page.goto(`event-types/${paymentEvent?.id}?tabName=apps`);
+    await goToAppsTab(page, paymentEvent?.id);
 
     await page.locator("#event-type-form").getByRole("switch").click();
 
@@ -183,7 +191,7 @@ test.describe("Payment app", () => {
       },
     });
 
-    await page.goto(`event-types/${paymentEvent?.id}?tabName=apps`);
+    await goToAppsTab(page, paymentEvent?.id);
 
     await page.locator("#event-type-form").getByRole("switch").click();
 
@@ -218,7 +226,7 @@ test.describe("Payment app", () => {
       },
     });
 
-    await page.goto(`event-types/${paymentEvent?.id}?tabName=apps`);
+    await goToAppsTab(page, paymentEvent?.id);
 
     await page.locator("#event-type-form").getByRole("switch").click();
     // make sure Tracking ID is displayed
@@ -265,7 +273,7 @@ test.describe("Payment app", () => {
       ],
     });
 
-    await page.goto(`event-types/${paymentEvent.id}?tabName=apps`);
+    await goToAppsTab(page, paymentEvent?.id);
 
     await page.locator("[data-testid='paypal-app-switch']").click();
     await page.locator("[data-testid='stripe-app-switch']").isDisabled();
@@ -312,15 +320,15 @@ test.describe("Payment app", () => {
       ],
     });
 
-    await page.goto(`event-types/${paymentEvent.id}?tabName=apps`);
+    await goToAppsTab(page, paymentEvent?.id);
 
-    await page.locator("[data-testid='paypal-app-switch']").click();
-    await page.locator("[data-testid='paypal-price-input']").fill("100");
-    await page.locator("[data-testid='paypal-currency-select']").first().click();
-    await page.locator("#react-select-2-option-13").click();
+    await page.getByTestId("paypal-app-switch").click();
+    await page.getByTestId("paypal-price-input").fill("100");
+    await page.getByTestId("paypal-currency-select").first().click();
+    await page.getByTestId("select-option-MXN").click();
     // await page.locator(".mb-1 > .bg-default > div > div:nth-child(2)").first().click();
     // await page.getByText("$MXNCurrencyMexican pesoPayment option").click();
-    await page.locator("[data-testid='update-eventtype']").click();
+    await page.getByTestId("update-eventtype").click();
 
     // Need to wait for the DB to be updated
     await page.waitForResponse((res) => res.url().includes("update") && res.status() === 200);
@@ -336,10 +344,10 @@ test.describe("Payment app", () => {
 
     expect(paypalPrice?.price).toEqual(10000);
 
-    await page.locator("[data-testid='paypal-app-switch']").click();
-    await page.locator("[data-testid='stripe-app-switch']").click();
-    await page.locator("[data-testid='stripe-price-input']").fill("200");
-    await page.locator("[data-testid='update-eventtype']").click();
+    await page.getByTestId("paypal-app-switch").click();
+    await page.getByTestId("stripe-app-switch").click();
+    await page.getByTestId("stripe-price-input").fill("200");
+    await page.getByTestId("update-eventtype").click();
 
     // Need to wait for the DB to be updated
     await page.waitForResponse((res) => res.url().includes("update") && res.status() === 200);

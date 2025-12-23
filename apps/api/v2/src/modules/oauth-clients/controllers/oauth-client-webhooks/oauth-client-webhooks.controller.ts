@@ -1,6 +1,6 @@
 import { API_VERSIONS_VALUES } from "@/lib/api-versions";
 import { MembershipRoles } from "@/modules/auth/decorators/roles/membership-roles.decorator";
-import { NextAuthGuard } from "@/modules/auth/guards/next-auth/next-auth.guard";
+import { ApiAuthGuard } from "@/modules/auth/guards/api-auth/api-auth.guard";
 import { OrganizationRolesGuard } from "@/modules/auth/guards/organization-roles/organization-roles.guard";
 import { GetWebhook } from "@/modules/webhooks/decorators/get-webhook-decorator";
 import { IsOAuthClientWebhookGuard } from "@/modules/webhooks/guards/is-oauth-client-webhook-guard";
@@ -16,12 +16,13 @@ import { WebhookOutputPipe } from "@/modules/webhooks/pipes/WebhookOutputPipe";
 import { OAuthClientWebhooksService } from "@/modules/webhooks/services/oauth-clients-webhooks.service";
 import { WebhooksService } from "@/modules/webhooks/services/webhooks.service";
 import { Controller, Post, Body, UseGuards, Get, Param, Query, Delete, Patch } from "@nestjs/common";
-import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { Webhook, MembershipRole } from "@prisma/client";
+import { ApiHeader, ApiOperation, ApiTags as DocsTags } from "@nestjs/swagger";
 import { plainToClass } from "class-transformer";
 
-import { SUCCESS_STATUS } from "@calcom/platform-constants";
+import { SUCCESS_STATUS, X_CAL_SECRET_KEY } from "@calcom/platform-constants";
+import { MembershipRole } from "@calcom/platform-libraries";
 import { SkipTakePagination } from "@calcom/platform-types";
+import type { Webhook } from "@calcom/prisma/client";
 
 import { OAuthClientGuard } from "../../guards/oauth-client-guard";
 
@@ -29,8 +30,13 @@ import { OAuthClientGuard } from "../../guards/oauth-client-guard";
   path: "/v2/oauth-clients/:clientId/webhooks",
   version: API_VERSIONS_VALUES,
 })
-@UseGuards(NextAuthGuard, OrganizationRolesGuard, OAuthClientGuard)
-@ApiTags("OAuthClients Webhooks")
+@UseGuards(ApiAuthGuard, OrganizationRolesGuard, OAuthClientGuard)
+@DocsTags("Platform / Webhooks")
+@ApiHeader({
+  name: X_CAL_SECRET_KEY,
+  description: "OAuth client secret key",
+  required: true,
+})
 export class OAuthClientWebhooksController {
   constructor(
     private readonly webhooksService: WebhooksService,
@@ -39,7 +45,7 @@ export class OAuthClientWebhooksController {
 
   @Post("/")
   @MembershipRoles([MembershipRole.ADMIN, MembershipRole.OWNER])
-  @ApiOperation({ summary: "Create a webhook for an oAuthClient" })
+  @ApiOperation({ summary: "Create a webhook" })
   async createOAuthClientWebhook(
     @Body() body: CreateWebhookInputDto,
     @Param("clientId") oAuthClientId: string
@@ -59,7 +65,7 @@ export class OAuthClientWebhooksController {
 
   @Patch("/:webhookId")
   @MembershipRoles([MembershipRole.ADMIN, MembershipRole.OWNER])
-  @ApiOperation({ summary: "Update a webhook of an oAuthClient" })
+  @ApiOperation({ summary: "Update a webhook" })
   @UseGuards(IsOAuthClientWebhookGuard)
   async updateOAuthClientWebhook(
     @Body() body: UpdateWebhookInputDto,
@@ -79,7 +85,7 @@ export class OAuthClientWebhooksController {
 
   @Get("/:webhookId")
   @MembershipRoles([MembershipRole.ADMIN, MembershipRole.OWNER, MembershipRole.MEMBER])
-  @ApiOperation({ summary: "Get a webhook of an oAuthClient" })
+  @ApiOperation({ summary: "Get a webhook" })
   @UseGuards(IsOAuthClientWebhookGuard)
   async getOAuthClientWebhook(@GetWebhook() webhook: Webhook): Promise<OAuthClientWebhookOutputResponseDto> {
     return {
@@ -92,7 +98,7 @@ export class OAuthClientWebhooksController {
 
   @Get("/")
   @MembershipRoles([MembershipRole.ADMIN, MembershipRole.OWNER, MembershipRole.MEMBER])
-  @ApiOperation({ summary: "Get all webhooks of an oAuthClient" })
+  @ApiOperation({ summary: "Get all webhooks" })
   async getOAuthClientWebhooks(
     @Param("clientId") oAuthClientId: string,
     @Query() pagination: SkipTakePagination
@@ -114,7 +120,7 @@ export class OAuthClientWebhooksController {
 
   @Delete("/:webhookId")
   @MembershipRoles([MembershipRole.ADMIN, MembershipRole.OWNER])
-  @ApiOperation({ summary: "Delete a webhook of an oAuthClient" })
+  @ApiOperation({ summary: "Delete a webhook" })
   @UseGuards(IsOAuthClientWebhookGuard)
   async deleteOAuthClientWebhook(
     @GetWebhook() webhook: Webhook
@@ -130,7 +136,7 @@ export class OAuthClientWebhooksController {
 
   @Delete("/")
   @MembershipRoles([MembershipRole.ADMIN, MembershipRole.OWNER])
-  @ApiOperation({ summary: "Delete all webhooks of an oAuthClient" })
+  @ApiOperation({ summary: "Delete all webhooks" })
   async deleteAllOAuthClientWebhooks(
     @Param("clientId") oAuthClientId: string
   ): Promise<DeleteManyWebhooksOutputResponseDto> {

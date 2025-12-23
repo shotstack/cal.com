@@ -1,8 +1,10 @@
 import createUsersAndConnectToOrg from "@calcom/features/ee/dsync/lib/users/createUsersAndConnectToOrg";
+import { getOrganizationRepository } from "@calcom/features/ee/organizations/di/OrganizationRepository.container";
 import { HOSTED_CAL_FEATURES } from "@calcom/lib/constants";
 import type { PrismaClient } from "@calcom/prisma";
 import { IdentityProvider } from "@calcom/prisma/enums";
-import { TRPCError } from "@calcom/trpc/server";
+import { ErrorCode } from "@calcom/lib/errorCodes";
+import { ErrorWithCode } from "@calcom/lib/errors";
 
 import jackson from "./jackson";
 import { tenantPrefix, samlProductID } from "./saml";
@@ -21,63 +23,34 @@ const getAllAcceptedMemberships = async ({ prisma, email }: { prisma: PrismaClie
   });
 };
 
-const getVerifiedOrganizationByAutoAcceptEmailDomain = async ({
-  prisma,
-  domain,
-}: {
-  prisma: PrismaClient;
-  domain: string;
-}) => {
-  return await prisma.team.findFirst({
-    where: {
-      organizationSettings: {
-        isOrganizationVerified: true,
-        orgAutoAcceptEmail: domain,
-      },
-    },
-    select: {
-      id: true,
-    },
-  });
-};
-
 export const ssoTenantProduct = async (prisma: PrismaClient, email: string) => {
   const { connectionController } = await jackson();
 
   let memberships = await getAllAcceptedMemberships({ prisma, email });
 
   if (!memberships || memberships.length === 0) {
-    if (!HOSTED_CAL_FEATURES)
-      throw new TRPCError({
-        code: "UNAUTHORIZED",
-        message: "no_account_exists",
-      });
+    if (!HOSTED_CAL_FEATURES) throw new ErrorWithCode(ErrorCode.Unauthorized, "no_account_exists");
 
     const domain = email.split("@")[1];
-    const organization = await getVerifiedOrganizationByAutoAcceptEmailDomain({ prisma, domain });
+    const organizationRepository = getOrganizationRepository();
+    const organization = await organizationRepository.getVerifiedOrganizationByAutoAcceptEmailDomain(domain);
 
-    if (!organization)
-      throw new TRPCError({
-        code: "UNAUTHORIZED",
-        message: "no_account_exists",
-      });
+    if (!organization) throw new ErrorWithCode(ErrorCode.Unauthorized, "no_account_exists");
 
-    const organizationId = organization.id;
     const createUsersAndConnectToOrgProps = {
       emailsToCreate: [email],
-      organizationId,
       identityProvider: IdentityProvider.SAML,
       identityProviderId: email,
     };
 
-    await createUsersAndConnectToOrg(createUsersAndConnectToOrgProps);
+    await createUsersAndConnectToOrg({
+      createUsersAndConnectToOrgProps,
+      org: organization,
+    });
     memberships = await getAllAcceptedMemberships({ prisma, email });
 
     if (!memberships || memberships.length === 0)
-      throw new TRPCError({
-        code: "UNAUTHORIZED",
-        message: "no_account_exists",
-      });
+      throw new ErrorWithCode(ErrorCode.Unauthorized, "no_account_exists");
   }
 
   // Check SSO connections for each team user is a member of
@@ -97,11 +70,10 @@ export const ssoTenantProduct = async (prisma: PrismaClient, email: string) => {
     .filter((connections) => connections.length > 0);
 
   if (connectionsFound.length === 0) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message:
-        "Could not find a SSO Identity Provider for your email. Please contact your admin to ensure you have been given access to Cal",
-    });
+    throw new ErrorWithCode(
+      ErrorCode.BadRequest,
+      "Could not find a SSO Identity Provider for your email. Please contact your admin to ensure you have been given access to Cal"
+    );
   }
 
   return {

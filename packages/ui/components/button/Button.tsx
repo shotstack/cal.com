@@ -4,10 +4,11 @@ import type { LinkProps } from "next/link";
 import Link from "next/link";
 import React, { forwardRef } from "react";
 
-import classNames from "@calcom/lib/classNames";
+import classNames from "@calcom/ui/classNames";
 
-import { Icon, type IconName } from "../..";
-import { Tooltip } from "../tooltip";
+import { Icon } from "../icon/Icon";
+import type { IconName } from "../icon/Icon";
+import { Tooltip } from "../tooltip/Tooltip";
 
 type InferredVariantProps = VariantProps<typeof buttonClasses>;
 
@@ -25,6 +26,7 @@ export type ButtonBaseProps = {
   tooltip?: string | React.ReactNode;
   tooltipSide?: "top" | "right" | "bottom" | "left";
   tooltipOffset?: number;
+  tooltipClassName?: string;
   disabled?: boolean;
   flex?: boolean;
 } & Omit<InferredVariantProps, "color"> & {
@@ -38,28 +40,119 @@ export type ButtonProps = ButtonBaseProps &
   );
 
 export const buttonClasses = cva(
-  "whitespace-nowrap inline-flex items-center text-sm font-medium relative rounded-md transition disabled:cursor-not-allowed",
+  "group whitespace-nowrap inline-flex items-center text-sm font-medium relative rounded-[10px] transition cursor-pointer disabled:cursor-not-allowed gap-1",
   {
     variants: {
       variant: {
         button: "",
         icon: "flex justify-center",
-        fab: "rounded-full justify-center md:rounded-md radix-state-open:rotate-45 md:radix-state-open:rotate-0 radix-state-open:shadown-none radix-state-open:ring-0 !shadow-none",
+        fab: "min-w-14 min-h-14 md:min-w-min md:min-h-min rounded-full justify-center md:rounded-[10px] radix-state-open:rotate-45 md:radix-state-open:rotate-0 radix-state-open:shadown-none radix-state-open:ring-0",
       },
       color: {
-        primary:
-          "bg-brand-default hover:bg-brand-emphasis focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset focus-visible:ring-brand-default text-brand disabled:bg-brand-subtle disabled:text-brand-subtle disabled:opacity-40 disabled:hover:bg-brand-subtle disabled:hover:text-brand-default disabled:hover:opacity-40",
-        secondary:
-          "text-emphasis border border-default bg-default hover:bg-muted hover:border-emphasis focus-visible:bg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset focus-visible:ring-empthasis disabled:border-subtle disabled:bg-opacity-30 disabled:text-muted disabled:hover:bg-opacity-30 disabled:hover:text-muted disabled:hover:border-subtle disabled:hover:bg-default",
-        minimal:
-          "text-emphasis hover:bg-subtle focus-visible:bg-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset focus-visible:ring-empthasis disabled:border-subtle disabled:bg-opacity-30 disabled:text-muted disabled:hover:bg-transparent disabled:hover:text-muted disabled:hover:border-subtle",
-        destructive:
-          "border border-default text-emphasis hover:text-red-700 dark:hover:text-red-100 focus-visible:text-red-700  hover:border-red-100 focus-visible:border-red-100 hover:bg-error  focus-visible:bg-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset focus-visible:ring-red-700 disabled:bg-red-100 disabled:border-red-200 disabled:text-red-700 disabled:hover:border-red-200 disabled:opacity-40",
+        primary: [
+          // Base colors
+          "bg-brand-default",
+          "text-brand",
+          // Hover state
+          "not-disabled:hover:bg-brand-emphasis",
+          // Focus state
+          "focus-visible:outline-none",
+          "focus-visible:ring-0",
+          "focus-visible:shadow-button-solid-brand-focused",
+          // Border
+          "border border-brand-default",
+          // Disabled
+          "disabled:opacity-30",
+          // Shadows and effects
+          "shadow-button-solid-brand-default",
+          "not-disabled:active:shadow-button-solid-brand-active",
+          "not-disabled:hover:shadow-button-solid-brand-hover",
+          "transition-shadow",
+          "transition-transform",
+          "duration-100",
+        ],
+
+        secondary: [
+          // Base colors and border
+          "bg-default",
+          "text-default",
+          "border",
+          "border-default",
+          // Hover state
+          "not-disabled:hover:bg-cal-muted",
+          "not-disabled:hover:text-emphasis",
+          // Disabled
+          "disabled:opacity-30",
+          // Focus state
+          "focus-visible:bg-subtle",
+          "focus-visible:outline-none",
+          "focus-visible:ring-0",
+          "focus-visible:shadow-outline-gray-focused",
+          // Shadows and effects
+          "shadow-outline-gray-rested",
+          "not-disabled:hover:shadow-outline-gray-hover",
+          "not-disabled:active:shadow-outline-gray-active",
+          "transition-shadow",
+          "duration-200",
+        ],
+
+        minimal: [
+          // Base color
+          "text-subtle",
+          "border border-transparent",
+          // Hover
+          "not-disabled:hover:bg-subtle",
+          "not-disabled:hover:text-emphasis",
+          "not-disabled:hover:border-subtle hover:border",
+          // Disabled
+          "disabled:opacity-30",
+          // Focus
+          "focus-visible:bg-subtle",
+          "focus-visible:outline-none",
+          "focus-visible:ring-0",
+          "focus-visible:border-subtle",
+          "focus-visible:shadow-button-outline-gray-focused",
+
+          // Shadows and effects
+          "not-disabled:active:shadow-outline-gray-active",
+          "transition-shadow",
+          "duration-200",
+        ],
+
+        destructive: [
+          // Base colors and border
+          "border",
+          "border-default",
+          "text-error",
+          // Hover state
+          "dark:hover:text-red-100",
+          "hover:border-semantic-error",
+          "hover:bg-error",
+          // Focus state
+          "focus-visible:text-red-700",
+          "focus-visible:bg-error",
+          "focus-visible:outline-none",
+          "focus-visible:ring-0",
+          "focus-visible:shadow-button-outline-red-focused",
+          // Disabled state
+          "disabled:bg-red-100",
+          "disabled:border-red-200",
+          "disabled:text-red-700",
+          "disabled:hover:border-red-200",
+          "disabled:opacity-30",
+          // Shadows and effects
+          "shadow-outline-red-rested",
+          "not-disabled:hover:shadow-outline-red-hover",
+          "not-disabled:active:shadow-outline-red-active",
+          "transition-shadow",
+          "duration-200",
+        ],
       },
       size: {
-        sm: "px-3 py-2 leading-4 rounded-sm" /** For backwards compatibility */,
-        base: "h-9 px-4 py-2.5 ",
-        lg: "h-[36px] px-4 py-2.5 ",
+        xs: "h-6 p-2 leading-none text-xs rounded-md",
+        sm: "h-7 px-2 py-1.5 leading-none text-sm" /** For backwards compatibility */,
+        base: "px-2.5 py-2 text-sm leading-none",
+        lg: "px-3 py-2.5 ",
       },
       loading: {
         true: "cursor-wait",
@@ -70,7 +163,7 @@ export const buttonClasses = cva(
       {
         loading: true,
         color: "primary",
-        className: "bg-brand-subtle text-brand-subtle",
+        className: "opacity-30",
       },
       // Secondary variants
       {
@@ -94,17 +187,27 @@ export const buttonClasses = cva(
       {
         variant: "icon",
         size: "base",
-        className: "min-h-[36px] min-w-[36px] !p-2 hover:border-default",
+        className: "min-h-[36px] min-w-[36px] p-2! hover:border-default",
+      },
+      {
+        variant: "icon",
+        size: "xs",
+        className: "h-5 w-5 p-1! rounded-md",
       },
       {
         variant: "icon",
         size: "sm",
-        className: "h-6 w-6 !p-1",
+        className: "h-6 w-6 p-1! rounded-md",
+      },
+      {
+        variant: "icon",
+        size: "lg",
+        className: "h-10 w-10 p-1!",
       },
       {
         variant: "fab",
         size: "base",
-        className: "h-14 md:h-9 md:w-auto md:px-4 md:py-2.5",
+        className: "md:px-4 md:py-2.5",
       },
     ],
     defaultVariants: {
@@ -127,6 +230,7 @@ export const Button = forwardRef<HTMLAnchorElement | HTMLButtonElement, ButtonPr
     type = "button",
     tooltipSide = "top",
     tooltipOffset = 4,
+    tooltipClassName,
     StartIcon,
     CustomStartIcon,
     EndIcon,
@@ -135,49 +239,50 @@ export const Button = forwardRef<HTMLAnchorElement | HTMLButtonElement, ButtonPr
     ...passThroughProps
   } = props;
   // Buttons are **always** disabled if we're in a `loading` state
-  const disabled = props.disabled || loading;
-  // If pass an `href`-attr is passed it's `<a>`, otherwise it's a `<button />`
+  const disabled = props.disabled || loading || false;
+  // If pass an `href`-attr is passed it's Link, otherwise it's a `<button />`
   const isLink = typeof props.href !== "undefined";
-  const elementType = isLink ? "a" : "button";
-  const element = React.createElement(
-    elementType,
-    {
-      ...passThroughProps,
-      disabled,
-      type: !isLink ? type : undefined,
-      ref: forwardedRef,
-      className: classNames(buttonClasses({ color, size, loading, variant }), props.className),
-      // if we click a disabled button, we prevent going through the click handler
-      onClick: disabled
-        ? (e: React.MouseEvent<HTMLElement, MouseEvent>) => {
-            e.preventDefault();
-          }
-        : props.onClick,
-    },
+  const buttonClassName = classNames(buttonClasses({ color, size, loading, variant }), props.className);
+  const handleClick = disabled
+    ? (e: React.MouseEvent<HTMLElement, MouseEvent>) => {
+        e.preventDefault();
+      }
+    : props.onClick;
+
+  const buttonContent = (
     <>
       {CustomStartIcon ||
         (StartIcon && (
           <>
             {variant === "fab" ? (
               <>
-                <Icon
-                  name={StartIcon}
-                  className="hidden h-4 w-4 stroke-[1.5px] ltr:-ml-1 ltr:mr-2 rtl:-mr-1 rtl:ml-2 md:inline-flex"
-                />
-                <Icon name="plus" data-testid="plus" className="inline h-6 w-6 md:hidden" />
+                <Icon name={StartIcon} className="hidden h-4 w-4 shrink-0 stroke-[1.5px]  md:inline-flex" />
+                <Icon name="plus" data-testid="plus" className="inline h-6 w-6 shrink-0 md:hidden" />
               </>
             ) : (
               <Icon
+                data-name="start-icon"
                 name={StartIcon}
                 className={classNames(
+                  "shrink-0",
+                  loading ? "invisible" : "visible",
+                  "button-icon group-[:not(div):active]:translate-y-[0.5px]",
                   variant === "icon" && "h-4 w-4",
-                  variant === "button" && "h-4 w-4 stroke-[1.5px] ltr:-ml-1 ltr:mr-2 rtl:-mr-1 rtl:ml-2"
+                  variant === "button" && "h-4 w-4 stroke-[1.5px] "
                 )}
               />
             )}
           </>
         ))}
-      {variant === "fab" ? <span className="hidden md:inline">{props.children}</span> : props.children}
+      <div
+        className={classNames(
+          "contents", // This makes the div behave like it doesn't exist in the layout
+          loading ? "invisible" : "visible",
+          variant === "fab" ? "hidden md:contents" : "",
+          "group-[:not(div):active]:translate-y-[0.5px]"
+        )}>
+        {props.children}
+      </div>
       {loading && (
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 transform">
           <svg
@@ -201,16 +306,18 @@ export const Button = forwardRef<HTMLAnchorElement | HTMLButtonElement, ButtonPr
         <>
           {variant === "fab" ? (
             <>
-              <Icon name={EndIcon} className="-mr-1 me-2 ms-2 hidden h-5 w-5 md:inline" />
-              <Icon name="plus" data-testid="plus" className="inline h-6 w-6 md:hidden" />
+              <Icon name={EndIcon} className="-mr-1 me-2 ms-2 hidden h-5 w-5 shrink-0 md:inline" />
+              <Icon name="plus" data-testid="plus" className="inline h-6 w-6 shrink-0 md:hidden" />
             </>
           ) : (
             <Icon
               name={EndIcon}
               className={classNames(
-                "inline-flex",
+                "shrink-0",
+                loading ? "invisible" : "visible",
+                "group-[:not(div):active]:translate-y-[0.5px]",
                 variant === "icon" && "h-4 w-4",
-                variant === "button" && "h-4 w-4 stroke-[1.5px] ltr:-mr-1 ltr:ml-2 rtl:-ml-1 rtl:mr-2"
+                variant === "button" && "h-4 w-4 stroke-[1.5px] "
               )}
             />
           )}
@@ -219,17 +326,36 @@ export const Button = forwardRef<HTMLAnchorElement | HTMLButtonElement, ButtonPr
     </>
   );
 
-  return props.href ? (
-    <Link data-testid="link-component" passHref href={props.href} shallow={shallow && shallow} legacyBehavior>
-      {element}
-    </Link>
-  ) : (
+  // Render Link or button separately to avoid type conflicts
+  // Link manages its own anchor element, so we don't pass ref to it
+  if (isLink) {
+    return (
+      <Link
+        {...(passThroughProps as Omit<JSX.IntrinsicElements["a"], "href" | "onClick" | "ref"> & LinkProps)}
+        shallow={shallow && shallow}
+        className={buttonClassName}
+        onClick={handleClick}>
+        {buttonContent}
+      </Link>
+    );
+  }
+
+  return (
     <Wrapper
       data-testid="wrapper"
       tooltip={props.tooltip}
       tooltipSide={tooltipSide}
-      tooltipOffset={tooltipOffset}>
-      {element}
+      tooltipOffset={tooltipOffset}
+      tooltipClassName={tooltipClassName}>
+      <button
+        {...(passThroughProps as Omit<JSX.IntrinsicElements["button"], "onClick" | "ref">)}
+        ref={forwardedRef as React.Ref<HTMLButtonElement>}
+        disabled={disabled}
+        type={type as "button" | "submit" | "reset"}
+        className={buttonClassName}
+        onClick={handleClick}>
+        {buttonContent}
+      </button>
     </Wrapper>
   );
 });
@@ -239,19 +365,28 @@ const Wrapper = ({
   tooltip,
   tooltipSide,
   tooltipOffset,
+  tooltipClassName,
 }: {
   tooltip?: string | React.ReactNode;
   children: React.ReactNode;
   tooltipSide?: "top" | "right" | "bottom" | "left";
   tooltipOffset?: number;
+  tooltipClassName?: string;
 }) => {
   if (!tooltip) {
     return <>{children}</>;
   }
 
   return (
-    <Tooltip data-testid="tooltip" content={tooltip} side={tooltipSide} sideOffset={tooltipOffset}>
+    <Tooltip
+      data-testid="tooltip"
+      className={tooltipClassName}
+      content={tooltip}
+      side={tooltipSide}
+      sideOffset={tooltipOffset}>
       {children}
     </Tooltip>
   );
 };
+
+Button.displayName = "Button";

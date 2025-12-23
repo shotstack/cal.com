@@ -1,3 +1,5 @@
+"use client";
+
 import dynamic from "next/dynamic";
 import type { ChangeEvent } from "react";
 import type {
@@ -8,12 +10,15 @@ import type {
   ProviderProps,
 } from "react-awesome-query-builder";
 
-import { Button as CalButton, TextField, TextArea } from "@calcom/ui";
-import { Icon } from "@calcom/ui";
+import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { Button as CalButton } from "@calcom/ui/components/button";
+import { TextArea } from "@calcom/ui/components/form";
+import { TextField } from "@calcom/ui/components/form";
+import { Icon } from "@calcom/ui/components/icon";
 
 const Select = dynamic(
-  async () => (await import("@calcom/ui")).SelectWithValidation
-) as unknown as typeof import("@calcom/ui").SelectWithValidation;
+  async () => (await import("@calcom/ui/components/form")).SelectWithValidation
+) as unknown as typeof import("@calcom/ui/components/form").SelectWithValidation;
 
 export type CommonProps<
   TVal extends
@@ -88,6 +93,7 @@ const TextAreaWidget = (props: TextLikeComponentPropsRAQB) => {
     <TextArea
       value={textValue}
       placeholder={placeholder}
+      className="mb-2"
       disabled={readOnly}
       onChange={onChange}
       maxLength={maxLength}
@@ -115,7 +121,8 @@ const TextWidget = (props: TextLikeComponentPropsRAQB) => {
   const textValue = value || "";
   return (
     <TextField
-      containerClassName="w-full"
+      size="sm"
+      containerClassName="w-full mb-2"
       type={type}
       value={textValue}
       noLabel={noLabel}
@@ -131,10 +138,11 @@ const TextWidget = (props: TextLikeComponentPropsRAQB) => {
 function NumberWidget({ value, setValue, ...remainingProps }: TextLikeComponentPropsRAQB) {
   return (
     <TextField
+      size="sm"
       type="number"
       labelSrOnly={remainingProps.noLabel}
       containerClassName="w-full"
-      className="bg-default border-default disabled:bg-emphasis focus:ring-brand-default dark:focus:border-emphasis focus:border-subtle block w-full rounded-md text-sm disabled:hover:cursor-not-allowed"
+      className="mb-2"
       value={value}
       onChange={(e) => {
         setValue(e.target.value);
@@ -172,6 +180,7 @@ const MultiSelectWidget = ({
 
   return (
     <Select
+      size="sm"
       aria-label="multi-select-dropdown"
       className="mb-2"
       onChange={(items) => {
@@ -207,6 +216,7 @@ function SelectWidget({ listValues, setValue, value, ...remainingProps }: Select
 
   return (
     <Select
+      size="sm"
       aria-label="select-dropdown"
       className="data-testid-select mb-2"
       onChange={(item) => {
@@ -224,6 +234,7 @@ function SelectWidget({ listValues, setValue, value, ...remainingProps }: Select
 }
 
 function Button({ config, type, label, onClick, readonly }: ButtonProps) {
+  const { t } = useLocale();
   if (type === "delRule" || type == "delGroup") {
     return (
       <button className="ml-5">
@@ -233,18 +244,19 @@ function Button({ config, type, label, onClick, readonly }: ButtonProps) {
   }
   let dataTestId = "";
   if (type === "addRule") {
-    label = config?.operators.__calReporting ? "Add Filter" : "Add rule";
+    label = config?.operators.__calReporting ? t("add_filter") : t("add_rule");
     dataTestId = "add-rule";
   } else if (type == "addGroup") {
-    label = "Add rule group";
+    label = t("add_rule_group");
     dataTestId = "add-rule-group";
   }
   return (
     <CalButton
+      size="sm"
       StartIcon="plus"
       data-testid={dataTestId}
       type="button"
-      color="secondary"
+      color="minimal"
       disabled={readonly}
       onClick={onClick}>
       {label}
@@ -262,11 +274,7 @@ function ButtonGroup({ children }: ButtonGroupProps) {
         if (!button) {
           return null;
         }
-        return (
-          <div key={key} className="mb-2">
-            {button}
-          </div>
-        );
+        return <div key={key}>{button}</div>;
       })}
     </>
   );
@@ -299,12 +307,13 @@ function Conjs({ not, setNot, config, conjunctionOptions, setConjunction, disabl
       value = value == "any" ? "none" : "all";
     }
     const selectValue = options.find((option) => option.value === value);
-    const summary = !config.operators.__calReporting ? "Rule group when" : "Query where";
+    const summary = !config.operators.__calReporting ? "If booker selects" : "Query where";
     return (
-      <div className="flex items-center text-sm">
+      <div className="mb-px flex items-center text-sm">
         <span>{summary}</span>
         <Select
           className="flex px-2"
+          size="sm"
           defaultValue={selectValue}
           options={options}
           onChange={(option) => {
@@ -321,7 +330,7 @@ function Conjs({ not, setNot, config, conjunctionOptions, setConjunction, disabl
             }
           }}
         />
-        <span>match</span>
+        {/* <span>match</span> */}
       </div>
     );
   };
@@ -344,6 +353,7 @@ const FieldSelect = function FieldSelect(props: FieldProps) {
 
   return (
     <Select
+      size="sm"
       className="data-testid-field-select  mb-2"
       menuPosition="fixed"
       onChange={(item) => {

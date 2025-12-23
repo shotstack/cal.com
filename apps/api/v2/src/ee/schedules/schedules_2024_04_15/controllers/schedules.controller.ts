@@ -23,8 +23,7 @@ import {
   Patch,
   UseGuards,
 } from "@nestjs/common";
-import { ApiResponse, ApiTags as DocsTags } from "@nestjs/swagger";
-import { Throttle } from "@nestjs/throttler";
+import { ApiExcludeController as DocsExcludeController } from "@nestjs/swagger";
 
 import { SCHEDULE_READ, SCHEDULE_WRITE, SUCCESS_STATUS } from "@calcom/platform-constants";
 import { UpdateScheduleInput_2024_04_15 } from "@calcom/platform-types";
@@ -36,7 +35,7 @@ import { CreateScheduleInput_2024_04_15 } from "../inputs/create-schedule.input"
   version: VERSION_2024_04_15_VALUE,
 })
 @UseGuards(ApiAuthGuard, PermissionsGuard)
-@DocsTags("Schedules")
+@DocsExcludeController(true)
 export class SchedulesController_2024_04_15 {
   constructor(private readonly schedulesService: SchedulesService_2024_04_15) {}
 
@@ -47,60 +46,52 @@ export class SchedulesController_2024_04_15 {
     @Body() bodySchedule: CreateScheduleInput_2024_04_15
   ): Promise<CreateScheduleOutput_2024_04_15> {
     const schedule = await this.schedulesService.createUserSchedule(user.id, bodySchedule);
-    const scheduleFormatted = await this.schedulesService.formatScheduleForAtom(user, schedule);
 
     return {
       status: SUCCESS_STATUS,
-      data: scheduleFormatted,
+      data: schedule,
     };
   }
 
   @Get("/default")
   @Permissions([SCHEDULE_READ])
-  @ApiResponse({
-    status: 200,
-    description: "Returns the default schedule",
-    type: GetDefaultScheduleOutput_2024_04_15,
-  })
   async getDefaultSchedule(
     @GetUser() user: UserWithProfile
   ): Promise<GetDefaultScheduleOutput_2024_04_15 | null> {
     const schedule = await this.schedulesService.getUserScheduleDefault(user.id);
-    const scheduleFormatted = schedule
-      ? await this.schedulesService.formatScheduleForAtom(user, schedule)
-      : null;
 
     return {
       status: SUCCESS_STATUS,
-      data: scheduleFormatted,
+      data: schedule,
     };
   }
 
   @Get("/:scheduleId")
   @Permissions([SCHEDULE_READ])
-  @Throttle({ default: { limit: 10, ttl: 60000 } }) // allow 10 requests per minute (for :scheduleId)
   async getSchedule(
     @GetUser() user: UserWithProfile,
     @Param("scheduleId") scheduleId: number
   ): Promise<GetScheduleOutput_2024_04_15> {
     const schedule = await this.schedulesService.getUserSchedule(user.id, scheduleId);
-    const scheduleFormatted = await this.schedulesService.formatScheduleForAtom(user, schedule);
 
     return {
       status: SUCCESS_STATUS,
-      data: scheduleFormatted,
+      data: schedule,
     };
   }
 
   @Get("/")
   @Permissions([SCHEDULE_READ])
   async getSchedules(@GetUser() user: UserWithProfile): Promise<GetSchedulesOutput_2024_04_15> {
-    const schedules = await this.schedulesService.getUserSchedules(user.id);
-    const schedulesFormatted = await this.schedulesService.formatSchedulesForAtom(user, schedules);
+    const schedules = await this.schedulesService.getUserSchedules(
+      user.id,
+      user.timeZone,
+      user.defaultScheduleId
+    );
 
     return {
       status: SUCCESS_STATUS,
-      data: schedulesFormatted,
+      data: schedules,
     };
   }
 

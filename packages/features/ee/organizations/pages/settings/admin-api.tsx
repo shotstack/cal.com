@@ -1,12 +1,13 @@
 "use client";
 
 import LicenseRequired from "@calcom/features/ee/common/components/LicenseRequired";
-import { getLayout } from "@calcom/features/settings/layouts/SettingsLayout";
 import { UpgradeTip } from "@calcom/features/tips";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Button, Icon, Meta, ButtonGroup } from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { ButtonGroup } from "@calcom/ui/components/buttonGroup";
+import { Icon } from "@calcom/ui/components/icon";
 
-const AdminAPIViewWrapper = () => {
+export const AdminAPIView = () => {
   const { t } = useLocale();
 
   const features = [
@@ -28,11 +29,6 @@ const AdminAPIViewWrapper = () => {
   ];
   return (
     <LicenseRequired>
-      <Meta
-        title={`${t("admin")} ${t("api_reference")}`}
-        description={t("leverage_our_api")}
-        borderInShellHeader={false}
-      />
       <div className="mt-8">
         <UpgradeTip
           plan="enterprise"
@@ -41,7 +37,7 @@ const AdminAPIViewWrapper = () => {
           features={features}
           background="/tips/enterprise"
           buttons={
-            <div className="space-y-2 rtl:space-x-reverse sm:space-x-2">
+            <div className="stack-y-2 rtl:space-x-reverse sm:space-x-2">
               <ButtonGroup>
                 <Button color="primary" href="https://cal.com/sales" target="_blank">
                   {t("contact_sales")}
@@ -59,6 +55,4 @@ const AdminAPIViewWrapper = () => {
   );
 };
 
-AdminAPIViewWrapper.getLayout = getLayout;
-
-export default AdminAPIViewWrapper;
+export default AdminAPIView;

@@ -1,9 +1,10 @@
 import { faker } from "@faker-js/faker";
-import type { Booking, EventType, Prisma, Webhook, BookingReference } from "@prisma/client";
-import type { TFunction } from "next-i18next";
+import type { TFunction } from "i18next";
 
 import getICalUID from "@calcom/emails/lib/getICalUID";
-import { BookingStatus } from "@calcom/prisma/enums";
+import type { Booking, EventType, Prisma, Webhook, BookingReference } from "@calcom/prisma/client";
+import { WebhookVersion } from "@calcom/features/webhooks/lib/interface/IWebhookRepository";
+import { CreationSource, BookingStatus } from "@calcom/prisma/enums";
 import type { CalendarEvent, Person, VideoCallData } from "@calcom/types/Calendar";
 
 export const buildVideoCallData = (callData?: Partial<VideoCallData>): VideoCallData => {
@@ -56,6 +57,7 @@ export const buildBooking = (
     cancelledBy: null,
     rescheduledBy: null,
     cancellationReason: null,
+    reassignReason: null,
     rejectionReason: null,
     dynamicEventSlugRef: null,
     dynamicGroupSlugRef: null,
@@ -63,6 +65,7 @@ export const buildBooking = (
     fromReschedule: null,
     recurringEventId: null,
     smsReminderNumber: null,
+    reassignById: null,
     scheduledJobs: [],
     metadata: null,
     responses: null,
@@ -73,6 +76,8 @@ export const buildBooking = (
     noShowHost: null,
     ratingFeedback: null,
     attendees: [],
+    oneTimePassword: null,
+    creationSource: CreationSource.WEBAPP,
     ...booking,
   };
 };
@@ -83,8 +88,10 @@ export const buildEventType = (eventType?: Partial<EventType>): EventType => {
     title: faker.lorem.sentence(),
     slug: faker.lorem.slug(),
     description: faker.lorem.paragraph(),
+    interfaceLanguage: null,
     position: 1,
     isInstantEvent: false,
+    instantMeetingParameters: [],
     instantMeetingExpiryTimeOffsetInSeconds: 90,
     instantMeetingScheduleId: null,
     locations: null,
@@ -94,6 +101,7 @@ export const buildEventType = (eventType?: Partial<EventType>): EventType => {
     userId: null,
     teamId: null,
     requiresBookerEmailVerification: false,
+    canSendCalVideoTranscriptionEmails: true,
     useEventTypeDestinationCalendarEmail: false,
     eventName: faker.lorem.words(),
     timeZone: null,
@@ -104,20 +112,32 @@ export const buildEventType = (eventType?: Partial<EventType>): EventType => {
     periodCountCalendarDays: null,
     recurringEvent: null,
     lockTimeZoneToggleOnBookingPage: false,
+    lockedTimeZone: null,
     requiresConfirmation: false,
+    requiresConfirmationForFreeEmail: false,
     requiresConfirmationWillBlockSlot: false,
     disableGuests: false,
     hideCalendarNotes: false,
+    hideCalendarEventDetails: false,
     minimumBookingNotice: 120,
     beforeEventBuffer: 0,
     afterEventBuffer: 0,
     onlyShowFirstAvailableSlot: false,
+    showOptimizedSlots: false,
     seatsPerTimeSlot: null,
     seatsShowAttendees: null,
+    disableCancelling: false,
+    disableRescheduling: false,
+    minimumRescheduleNotice: null,
+    allowReschedulingCancelledBookings: false,
     seatsShowAvailabilityCount: null,
+    maxLeadThreshold: null,
+    includeNoShowInRRCalculation: false,
     schedulingType: null,
     scheduleId: null,
     bookingLimits: null,
+    maxActiveBookingsPerBooker: null,
+    maxActiveBookingPerBookerOfferReschedule: false,
     durationLimits: null,
     assignAllTeamMembers: false,
     rescheduleWithSameRoundRobinHost: false,
@@ -133,6 +153,20 @@ export const buildEventType = (eventType?: Partial<EventType>): EventType => {
     secondaryEmailId: null,
     isRRWeightsEnabled: false,
     eventTypeColor: null,
+    assignRRMembersUsingSegment: false,
+    rrSegmentQueryValue: null,
+    autoTranslateDescriptionEnabled: false,
+    autoTranslateInstantMeetingTitleEnabled: true,
+    useEventLevelSelectedCalendars: false,
+    allowReschedulingPastBookings: false,
+    hideOrganizerEmail: false,
+    customReplyToEmail: null,
+    restrictionScheduleId: null,
+    useBookerTimezone: false,
+    bookingRequiresAuthentication: false,
+    createdAt: null,
+    updatedAt: null,
+    rrHostSubsetEnabled: false,
     ...eventType,
   };
 };
@@ -151,6 +185,9 @@ export const buildWebhook = (webhook?: Partial<Webhook>): Webhook => {
     eventTriggers: [],
     teamId: null,
     platformOAuthClientId: null,
+    time: null,
+    timeUnit: null,
+    version: WebhookVersion.V_2021_10_20,
     ...webhook,
     platform: false,
   };
@@ -256,8 +293,8 @@ type UserPayload = Prisma.UserGetPayload<{
   };
 }>;
 export const buildUser = <T extends Partial<UserPayload>>(
-  user?: T & { priority?: number; weight?: number; weightAdjustment?: number }
-): UserPayload & { priority: number; weight: number; weightAdjustment: number } => {
+  user?: T & { priority?: number; weight?: number }
+): UserPayload & { priority: number; weight: number } => {
   return {
     locked: false,
     smsLockState: "UNLOCKED",
@@ -306,7 +343,6 @@ export const buildUser = <T extends Partial<UserPayload>>(
     movedToProfileId: null,
     priority: user?.priority ?? 2,
     weight: user?.weight ?? 100,
-    weightAdjustment: user?.weightAdjustment ?? 0,
     isPlatformManaged: false,
     ...user,
   };

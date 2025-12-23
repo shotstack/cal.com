@@ -1,38 +1,33 @@
+"use client";
+
+import { keepPreviousData } from "@tanstack/react-query";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState, useMemo } from "react";
+import posthog from "posthog-js";
 
+import { checkAdminOrOwner } from "@calcom/features/auth/lib/checkAdminOrOwner";
 import { useOrgBranding } from "@calcom/features/ee/organizations/context/provider";
 import InviteLinkSettingsModal from "@calcom/features/ee/teams/components/InviteLinkSettingsModal";
-import MemberInvitationModal from "@calcom/features/ee/teams/components/MemberInvitationModal";
-import { classNames } from "@calcom/lib";
+import { MemberInvitationModalWithoutMembers } from "@calcom/features/ee/teams/components/MemberInvitationModal";
 import { APP_NAME } from "@calcom/lib/constants";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { telemetryEventTypes, useTelemetry } from "@calcom/lib/telemetry";
 import { MembershipRole } from "@calcom/prisma/enums";
 import type { RouterOutputs } from "@calcom/trpc/react";
 import { trpc } from "@calcom/trpc/react";
-import {
-  Badge,
-  Button,
-  showToast,
-  SkeletonButton,
-  SkeletonContainer,
-  SkeletonText,
-  UserAvatar,
-} from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+import { UserAvatar } from "@calcom/ui/components/avatar";
+import { Badge } from "@calcom/ui/components/badge";
+import { Button } from "@calcom/ui/components/button";
+import { SkeletonButton, SkeletonContainer, SkeletonText } from "@calcom/ui/components/skeleton";
+import { showToast } from "@calcom/ui/components/toast";
 
-type TeamMember = RouterOutputs["viewer"]["teams"]["get"]["members"][number];
-
-type FormValues = {
-  members: TeamMember[];
-};
+type TeamMember = RouterOutputs["viewer"]["teams"]["listMembers"]["members"][number];
 
 const AddNewTeamMembers = ({ isOrg = false }: { isOrg?: boolean }) => {
   const searchParams = useCompatSearchParams();
   const session = useSession();
-  const telemetry = useTelemetry();
 
   const teamId = searchParams?.get("id") ? Number(searchParams.get("id")) : -1;
   const teamQuery = trpc.viewer.teams.get.useQuery(
@@ -40,38 +35,16 @@ const AddNewTeamMembers = ({ isOrg = false }: { isOrg?: boolean }) => {
     { enabled: session.status === "authenticated" }
   );
 
-  useEffect(() => {
-    const event = searchParams?.get("event");
-    if (event === "team_created") {
-      telemetry.event(telemetryEventTypes.team_created);
-    }
-  }, []);
-
   if (session.status === "loading" || !teamQuery.data) return <AddNewTeamMemberSkeleton />;
 
-  return (
-    <AddNewTeamMembersForm
-      defaultValues={{ members: teamQuery.data.members }}
-      teamId={teamId}
-      isOrg={isOrg}
-    />
-  );
+  return <AddNewTeamMembersForm teamId={teamId} isOrg={isOrg} />;
 };
 
-export const AddNewTeamMembersForm = ({
-  defaultValues,
-  teamId,
-  isOrg,
-}: {
-  defaultValues: FormValues;
-  teamId: number;
-  isOrg?: boolean;
-}) => {
+export const AddNewTeamMembersForm = ({ teamId, isOrg }: { teamId: number; isOrg?: boolean }) => {
   const searchParams = useCompatSearchParams();
-  const { t, i18n } = useLocale();
+  const { t } = useLocale();
 
   const router = useRouter();
-  const utils = trpc.useUtils();
   const orgBranding = useOrgBranding();
 
   const showDialog = searchParams?.get("inviteModal") === "true";
@@ -89,7 +62,24 @@ export const AddNewTeamMembersForm = ({
     }
   );
 
-  const inviteMemberMutation = trpc.viewer.teams.inviteMember.useMutation();
+  const { data, fetchNextPage, isFetchingNextPage, hasNextPage } =
+    trpc.viewer.teams.listMembers.useInfiniteQuery(
+      {
+        limit: 10,
+        teamId,
+      },
+      {
+        enabled: !!teamId,
+        getNextPageParam: (lastPage) => lastPage.nextCursor,
+        placeholderData: keepPreviousData,
+        refetchOnWindowFocus: true,
+        refetchOnMount: true,
+        staleTime: 0,
+      }
+    );
+
+  const flatData = useMemo(() => data?.pages?.flatMap((page) => page.members) ?? [], [data]) as TeamMember[];
+  const totalFetched = flatData.length;
 
   const publishTeamMutation = trpc.viewer.teams.publish.useMutation({
     onSuccess(data) {
@@ -103,25 +93,34 @@ export const AddNewTeamMembersForm = ({
   return (
     <>
       <div>
-        {defaultValues.members.length > 0 && (
-          <ul className="border-subtle rounded-md border" data-testid="pending-member-list">
-            {defaultValues.members.map((member, index) => (
-              <PendingMemberItem
-                key={member.email}
-                member={member}
-                index={index}
-                teamId={teamId}
-                isOrg={isOrg}
-              />
-            ))}
-          </ul>
+        <ul className="border-subtle rounded-md border" data-testid="pending-member-list">
+          {flatData.map((member, index) => (
+            <PendingMemberItem
+              key={member.email}
+              member={member}
+              index={index}
+              teamId={teamId}
+              isOrg={isOrg}
+            />
+          ))}
+        </ul>
+        {totalFetched > 0 && (
+          <div className="text-default text-center">
+            <Button
+              color="minimal"
+              loading={isFetchingNextPage}
+              disabled={!hasNextPage}
+              onClick={() => fetchNextPage()}>
+              {hasNextPage ? t("load_more_results") : t("no_more_results")}
+            </Button>
+          </div>
         )}
         <Button
           color="secondary"
           data-testid="new-member-button"
           StartIcon="plus"
           onClick={() => setMemberInviteModal(true)}
-          className={classNames("w-full justify-center", defaultValues.members.length > 0 && "mt-6")}>
+          className={classNames("w-full justify-center", totalFetched > 0 && "mt-6")}>
           {isOrg ? t("add_org_members") : t("add_team_member")}
         </Button>
       </div>
@@ -129,53 +128,16 @@ export const AddNewTeamMembersForm = ({
         <SkeletonButton />
       ) : (
         <>
-          <MemberInvitationModal
-            isPending={inviteMemberMutation.isPending}
-            isOpen={memberInviteModal}
+          <MemberInvitationModalWithoutMembers
+            showMemberInvitationModal={memberInviteModal}
             orgMembers={orgMembersNotInThisTeam}
             teamId={teamId}
             token={team?.inviteToken?.token}
-            onExit={() => setMemberInviteModal(false)}
-            onSubmit={(values, resetFields) => {
-              inviteMemberMutation.mutate(
-                {
-                  teamId,
-                  language: i18n.language,
-                  role: values.role,
-                  usernameOrEmail: values.emailOrUsername,
-                },
-                {
-                  onSuccess: async (data) => {
-                    await utils.viewer.teams.get.invalidate();
-                    setMemberInviteModal(false);
-                    resetFields();
-                    if (Array.isArray(data.usernameOrEmail)) {
-                      showToast(
-                        t("email_invite_team_bulk", {
-                          userCount: data.numUsersInvited,
-                        }),
-                        "success"
-                      );
-                    } else {
-                      showToast(
-                        t("email_invite_team", {
-                          email: data.usernameOrEmail,
-                        }),
-                        "success"
-                      );
-                    }
-                  },
-                  onError: (error) => {
-                    showToast(error.message, "error");
-                  },
-                }
-              );
-            }}
+            hideInvitationModal={() => setMemberInviteModal(false)}
             onSettingsOpen={() => {
               setMemberInviteModal(false);
               setInviteLinkSettingsModal(true);
             }}
-            members={defaultValues.members}
           />
           {team?.inviteToken && (
             <InviteLinkSettingsModal
@@ -199,13 +161,18 @@ export const AddNewTeamMembersForm = ({
         className="w-full justify-center"
         disabled={publishTeamMutation.isPending}
         onClick={() => {
-          let uri = `/settings/teams/${teamId}/profile`;
+          posthog.capture("onboard_members_continue_clicked", {
+            team_id: teamId,
+            is_org: isOrg,
+            members_count: totalFetched,
+          });
+          let uri = `/settings/teams/${teamId}/event-type`;
           if (isOrg) {
             uri = `/settings/organizations/${teamId}/add-teams`;
           }
           router.push(uri);
         }}>
-        {isOrg ? t("continue") : t("finish")}
+        {t("continue")}
       </Button>
     </>
   );
@@ -235,11 +202,12 @@ const PendingMemberItem = (props: { member: TeamMember; index: number; teamId: n
   const { t } = useLocale();
   const utils = trpc.useUtils();
   const session = useSession();
-  const orgRole = session?.data?.user.org?.role;
+  const isAdminOrOwner = checkAdminOrOwner(session.data?.user?.org?.role);
   const bookerUrl = member.bookerUrl;
   const removeMemberMutation = trpc.viewer.teams.removeMember.useMutation({
     async onSuccess() {
       await utils.viewer.teams.get.invalidate();
+      await utils.viewer.teams.listMembers.invalidate();
       await utils.viewer.eventTypes.invalidate();
       showToast(t("member_removed"), "success");
     },
@@ -247,8 +215,6 @@ const PendingMemberItem = (props: { member: TeamMember; index: number; teamId: n
       showToast(err.message, "error");
     },
   });
-
-  const isOrgAdminOrOwner = orgRole === MembershipRole.OWNER || orgRole === MembershipRole.ADMIN;
 
   return (
     <li
@@ -278,7 +244,7 @@ const PendingMemberItem = (props: { member: TeamMember; index: number; teamId: n
           )}
         </div>
       </div>
-      {(member.role !== "OWNER" || isOrgAdminOrOwner) && member.id !== session.data?.user.id && (
+      {(member.role !== "OWNER" || isAdminOrOwner) && member.id !== session.data?.user.id && (
         <Button
           data-testid="remove-member-button"
           StartIcon="trash-2"

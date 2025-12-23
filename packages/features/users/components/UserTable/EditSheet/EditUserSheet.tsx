@@ -5,9 +5,11 @@ import { useOrgBranding } from "@calcom/ee/organizations/context/provider";
 import { WEBAPP_URL } from "@calcom/lib/constants";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import { Avatar, Loader, Sheet, SheetContent, SheetBody, SheetHeader, SheetFooter } from "@calcom/ui";
+import { Avatar } from "@calcom/ui/components/avatar";
+import { Sheet, SheetContent, SheetBody, SheetHeader, SheetFooter } from "@calcom/ui/components/sheet";
+import { Loader } from "@calcom/ui/components/skeleton";
 
-import type { Action, State } from "../UserListTable";
+import type { UserTableAction, UserTableState } from "../types";
 import { DisplayInfo } from "./DisplayInfo";
 import { EditForm } from "./EditUserForm";
 import { OrganizationBanner } from "./OrganizationBanner";
@@ -18,15 +20,26 @@ function removeProtocol(url: string) {
   return url.replace(/^(https?:\/\/)/, "");
 }
 
-export function EditUserSheet({ state, dispatch }: { state: State; dispatch: Dispatch<Action> }) {
+export function EditUserSheet({
+  state,
+  dispatch,
+  canViewAttributes,
+  canEditAttributesForUser,
+  canChangeMemberRole,
+}: {
+  state: UserTableState;
+  dispatch: Dispatch<UserTableAction>;
+  canViewAttributes?: boolean;
+  canEditAttributesForUser?: boolean;
+  canChangeMemberRole?: boolean;
+}) {
   const { t } = useLocale();
   const { user: selectedUser } = state.editSheet;
   const orgBranding = useOrgBranding();
   const [editMode, setEditMode] = useEditMode((state) => [state.editMode, state.setEditMode], shallow);
   const { data: loadedUser, isPending } = trpc.viewer.organizations.getUser.useQuery(
     {
-      // @ts-expect-error we obly enable the query if the user is selected
-      userId: selectedUser.id,
+      userId: selectedUser?.id,
     },
     {
       enabled: !!selectedUser?.id,
@@ -36,11 +49,11 @@ export function EditUserSheet({ state, dispatch }: { state: State; dispatch: Dis
   const { data: usersAttributes, isPending: usersAttributesPending } =
     trpc.viewer.attributes.getByUserId.useQuery(
       {
-        // @ts-expect-error we obly enable the query if the user is selected
-        userId: selectedUser.id,
+        // @ts-expect-error We know it exists as it is only called when selectedUser is defined
+        userId: selectedUser?.id,
       },
       {
-        enabled: !!selectedUser?.id,
+        enabled: !!selectedUser?.id && !!canViewAttributes,
       }
     );
 
@@ -57,7 +70,7 @@ export function EditUserSheet({ state, dispatch }: { state: State; dispatch: Dis
         setEditMode(false);
         dispatch({ type: "CLOSE_MODAL" });
       }}>
-      <SheetContent className="bg-muted">
+      <SheetContent className="bg-default">
         {!isPending && loadedUser ? (
           <>
             {!editMode ? (
@@ -66,12 +79,7 @@ export function EditUserSheet({ state, dispatch }: { state: State; dispatch: Dis
                   <div className="border-sublte bg-default w-full rounded-xl border p-4">
                     <OrganizationBanner />
                     <div className="bg-default ml-3 w-fit translate-y-[-50%] rounded-full p-1 ring-1 ring-[#0000000F]">
-                      <Avatar
-                        asChild
-                        size="lg"
-                        alt={`${loadedUser?.name} avatar`}
-                        imageSrc={loadedUser.avatarUrl}
-                      />
+                      <Avatar asChild size="lg" alt={`${loadedUser?.name} avatar`} imageSrc={avatarURL} />
                     </div>
                     <h2 className="text-emphasis font-sans text-2xl font-semibold">
                       {loadedUser?.name || "Nameless User"}
@@ -81,8 +89,8 @@ export function EditUserSheet({ state, dispatch }: { state: State; dispatch: Dis
                     </p>
                   </div>
                 </SheetHeader>
-                <SheetBody className="flex flex-col space-y-4 p-4">
-                  <div className="mb-4 flex flex-col space-y-4">
+                <SheetBody className="stack-y-4 flex flex-col p-4">
+                  <div className="stack-y-4 mb-4 flex flex-col">
                     <h3 className="text-emphasis mb-1 text-base font-semibold">{t("profile")}</h3>
                     <DisplayInfo
                       label="Cal"
@@ -106,10 +114,10 @@ export function EditUserSheet({ state, dispatch }: { state: State; dispatch: Dis
                       icon="calendar"
                     />
                   </div>
-                  {usersAttributes && usersAttributes?.length > 0 && (
+                  {canViewAttributes && usersAttributes && usersAttributes?.length > 0 && (
                     <div className="mt-4 flex flex-col">
                       <h3 className="text-emphasis mb-5 text-base font-semibold">{t("attributes")}</h3>
-                      <div className="flex flex-col space-y-4">
+                      <div className="stack-y-4 flex flex-col">
                         {usersAttributes.map((attribute, index) => (
                           <>
                             <DisplayInfo
@@ -128,7 +136,10 @@ export function EditUserSheet({ state, dispatch }: { state: State; dispatch: Dis
                   )}
                 </SheetBody>
                 <SheetFooter>
-                  <SheetFooterControls />
+                  <SheetFooterControls
+                    canEditAttributesForUser={canEditAttributesForUser}
+                    canChangeMemberRole={canChangeMemberRole}
+                  />
                 </SheetFooter>
               </>
             ) : (
@@ -138,6 +149,7 @@ export function EditUserSheet({ state, dispatch }: { state: State; dispatch: Dis
                   avatarUrl={loadedUser.avatarUrl ?? avatarURL}
                   domainUrl={orgBranding?.fullDomain ?? WEBAPP_URL}
                   dispatch={dispatch}
+                  canEditAttributesForUser={canEditAttributesForUser}
                 />
               </>
             )}

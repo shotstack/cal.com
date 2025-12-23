@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { handleErrorsJson } from "@calcom/lib/errors";
+import { getDailyAppKeys } from "@calcom/app-store/dailyvideo/lib/getDailyAppKeys";
 import { prisma } from "@calcom/prisma";
 import type { GetRecordingsResponseSchema, GetAccessLinkResponseSchema } from "@calcom/prisma/zod-utils";
 import {
@@ -9,13 +9,18 @@ import {
   recordingItemSchema,
 } from "@calcom/prisma/zod-utils";
 import type { CalendarEvent } from "@calcom/types/Calendar";
-import type { CredentialPayload } from "@calcom/types/Credential";
+import type { CredentialForCalendarService } from "@calcom/types/Credential";
 import type { PartialReference } from "@calcom/types/EventManager";
 import type { VideoApiAdapter, VideoCallData } from "@calcom/types/VideoApiAdapter";
 
-import { ZSubmitBatchProcessorJobRes, ZGetTranscriptAccessLink } from "../zod";
+import {
+  ZSubmitBatchProcessorJobRes,
+  ZGetTranscriptAccessLink,
+  getMeetingInformationResponseSchema,
+  TGetMeetingInformationResponsesSchema,
+} from "../zod";
 import type { TSubmitBatchProcessorJobRes, TGetTranscriptAccessLink, batchProcessorBody } from "../zod";
-import { getDailyAppKeys } from "./getDailyAppKeys";
+import { fetcher } from "./dailyApiFetcher";
 import {
   dailyReturnTypeSchema,
   getTranscripts,
@@ -42,8 +47,42 @@ export interface DailyVideoCallData {
   url: string;
 }
 
+// Regions available to create DailyVideo Rooms in.
+const REGION_CODES = [
+  "af-south-1",
+  "ap-northeast-2",
+  "ap-southeast-1",
+  "ap-southeast-2",
+  "ap-south-1",
+  "eu-central-1",
+  "eu-west-2",
+  "sa-east-1",
+  "us-east-1",
+  "us-west-2",
+] as const;
+
+type RoomGeo = (typeof REGION_CODES)[number];
+
+function getDailyVideoRegionFromEnv(): RoomGeo | undefined {
+  if (!process?.env?.DAILY_VIDEO_REGION) return;
+  const isRoomGeo = (value: string): value is RoomGeo => REGION_CODES.includes(value as RoomGeo);
+  function assertIsDailyVideoRegion(value: string): asserts value is RoomGeo {
+    if (!isRoomGeo(value)) {
+      throw new Error(`Invalid region code: ${value}. Must be one of: ${REGION_CODES.join(", ")}`);
+    }
+  }
+  const region = process.env.DAILY_VIDEO_REGION;
+  assertIsDailyVideoRegion(region);
+  return region;
+}
+
+const isS3StorageEnabled =
+  process.env.CAL_VIDEO_BUCKET_NAME &&
+  process.env.CAL_VIDEO_BUCKET_REGION &&
+  process.env.CAL_VIDEO_ASSUME_ROLE_ARN;
+
 /** @deprecated use metadata on index file */
-export const FAKE_DAILY_CREDENTIAL: CredentialPayload & { invalid: boolean } = {
+export const FAKE_DAILY_CREDENTIAL: CredentialForCalendarService & { invalid: boolean } = {
   id: 0,
   type: "daily_video",
   key: { apikey: process.env.DAILY_API_KEY },
@@ -52,19 +91,9 @@ export const FAKE_DAILY_CREDENTIAL: CredentialPayload & { invalid: boolean } = {
   appId: "daily-video",
   invalid: false,
   teamId: null,
-};
-
-export const fetcher = async (endpoint: string, init?: RequestInit | undefined) => {
-  const { api_key } = await getDailyAppKeys();
-  return fetch(`https://api.daily.co/v1${endpoint}`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${api_key}`,
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-    ...init,
-  }).then(handleErrorsJson);
+  delegatedToId: null,
+  delegatedTo: null,
+  delegationCredentialId: null,
 };
 
 function postToDailyAPI(endpoint: string, body: Record<string, unknown>) {
@@ -111,15 +140,61 @@ async function processTranscriptsInBatches(transcriptIds: Array<string>) {
   return allTranscriptsAccessLinks;
 }
 
-export const generateGuestMeetingTokenFromOwnerMeetingToken = async (meetingToken: string | null) => {
+export const updateMeetingTokenIfExpired = async ({
+  bookingReferenceId,
+  meetingToken,
+  roomName,
+  exp,
+}: {
+  bookingReferenceId: number;
+  meetingToken: string | null;
+  roomName: string;
+  exp: number;
+}) => {
   if (!meetingToken) return null;
 
+  try {
+    await fetcher(`/meeting-tokens/${meetingToken}`).then(ZGetMeetingTokenResponseSchema.parse);
+  } catch {
+    const organizerMeetingToken = await postToDailyAPI("/meeting-tokens", {
+      properties: {
+        room_name: roomName,
+        exp: exp,
+        enable_recording_ui: false,
+        is_owner: true,
+      },
+    }).then(meetingTokenSchema.parse);
+
+    await prisma.bookingReference.update({
+      where: {
+        id: bookingReferenceId,
+      },
+      data: {
+        meetingPassword: organizerMeetingToken.token,
+      },
+    });
+
+    return organizerMeetingToken.token;
+  }
+
+  return meetingToken;
+};
+
+export const generateGuestMeetingTokenFromOwnerMeetingToken = async ({
+  meetingToken,
+  userId,
+}: {
+  meetingToken: string | null;
+  userId?: number | string;
+}) => {
+  if (!meetingToken) return null;
   const token = await fetcher(`/meeting-tokens/${meetingToken}`).then(ZGetMeetingTokenResponseSchema.parse);
   const guestMeetingToken = await postToDailyAPI("/meeting-tokens", {
     properties: {
       room_name: token.room_name,
       exp: token.exp,
       enable_recording_ui: false,
+      user_id: userId,
     },
   }).then(meetingTokenSchema.parse);
 
@@ -127,14 +202,15 @@ export const generateGuestMeetingTokenFromOwnerMeetingToken = async (meetingToke
 };
 
 // Only for backward compatibility
-export const setEnableRecordingUIForOrganizer = async (
+export const setEnableRecordingUIAndUserIdForOrganizer = async (
   bookingReferenceId: number,
-  meetingToken: string | null
+  meetingToken: string | null,
+  userId?: number
 ) => {
   if (!meetingToken) return null;
 
   const token = await fetcher(`/meeting-tokens/${meetingToken}`).then(ZGetMeetingTokenResponseSchema.parse);
-  if (token.enable_recording_ui === false) return null;
+  if (token.enable_recording_ui === false && !!token.user_id) return null;
 
   const organizerMeetingToken = await postToDailyAPI("/meeting-tokens", {
     properties: {
@@ -142,6 +218,7 @@ export const setEnableRecordingUIForOrganizer = async (
       exp: token.exp,
       enable_recording_ui: false,
       is_owner: true,
+      user_id: userId,
     },
   }).then(meetingTokenSchema.parse);
 
@@ -159,11 +236,15 @@ export const setEnableRecordingUIForOrganizer = async (
 };
 
 const DailyVideoApiAdapter = (): VideoApiAdapter => {
-  async function createOrUpdateMeeting(endpoint: string, event: CalendarEvent): Promise<VideoCallData> {
+  async function createOrUpdateMeeting(
+    endpoint: string,
+    event: CalendarEvent,
+    region?: RoomGeo
+  ): Promise<VideoCallData> {
     if (!event.uid) {
       throw new Error("We need need the booking uid to create the Daily reference in DB");
     }
-    const body = await translateEvent(event);
+    const body = await translateEvent(event, region);
     const dailyEvent = await postToDailyAPI(endpoint, body).then(dailyReturnTypeSchema.parse);
     const meetingToken = await postToDailyAPI("/meeting-tokens", {
       properties: {
@@ -182,7 +263,7 @@ const DailyVideoApiAdapter = (): VideoApiAdapter => {
     });
   }
 
-  const translateEvent = async (event: CalendarEvent) => {
+  const translateEvent = async (event: CalendarEvent, region?: RoomGeo) => {
     // Documentation at: https://docs.daily.co/reference#list-rooms
     // Adds 14 days from the end of the booking as the expiration date
     const exp = Math.round(new Date(event.endTime).getTime() / 1000) + 60 * 60 * 24 * 14;
@@ -198,48 +279,93 @@ const DailyVideoApiAdapter = (): VideoApiAdapter => {
       },
     });
 
+    const enableRecording = scalePlan === "true" && !!hasTeamPlan === true ? "cloud" : undefined;
+    const isTranscriptionEnabled = !!hasTeamPlan;
+
     return {
       privacy: "public",
       properties: {
+        ...(region ? { geo: region } : {}),
         enable_prejoin_ui: true,
         enable_knocking: true,
         enable_screenshare: true,
         enable_chat: true,
+        enable_pip_ui: true,
         exp: exp,
-        enable_recording: scalePlan === "true" && !!hasTeamPlan === true ? "cloud" : undefined,
-        enable_transcription_storage: !!hasTeamPlan,
-        ...(!!hasTeamPlan && {
+        enable_recording: enableRecording,
+        ...(!!enableRecording &&
+          isS3StorageEnabled && {
+            recordings_bucket: {
+              bucket_name: process.env.CAL_VIDEO_BUCKET_NAME,
+              bucket_region: process.env.CAL_VIDEO_BUCKET_REGION,
+              assume_role_arn: process.env.CAL_VIDEO_ASSUME_ROLE_ARN,
+              allow_api_access: true,
+              allow_streaming_from_bucket: false,
+            },
+          }),
+        enable_transcription_storage: isTranscriptionEnabled,
+        ...(isTranscriptionEnabled && {
           permissions: {
             canAdmin: ["transcription"],
           },
         }),
+        ...(isTranscriptionEnabled &&
+          isS3StorageEnabled && {
+            transcription_bucket: {
+              bucket_name: process.env.CAL_VIDEO_BUCKET_NAME,
+              bucket_region: process.env.CAL_VIDEO_BUCKET_REGION,
+              assume_role_arn: process.env.CAL_VIDEO_ASSUME_ROLE_ARN,
+              allow_api_access: true,
+            },
+          }),
       },
     };
   };
 
-  async function createInstantMeeting(endTime: string) {
+  async function createInstantMeeting(endTime: string, region?: RoomGeo) {
     // added a 1 hour buffer for room expiration
     const exp = Math.round(new Date(endTime).getTime() / 1000) + 60 * 60;
     const { scale_plan: scalePlan } = await getDailyAppKeys();
 
     const isScalePlanTrue = scalePlan === "true";
 
+    const enableRecording = isScalePlanTrue ? "cloud" : undefined;
+
     const body = {
       privacy: "public",
       properties: {
+        ...(region ? { geo: region } : {}),
         enable_prejoin_ui: true,
         enable_knocking: true,
         enable_screenshare: true,
         enable_chat: true,
+        enable_pip_ui: true,
         exp: exp,
-        enable_recording: isScalePlanTrue ? "cloud" : undefined,
+        enable_recording: enableRecording,
+        ...(!!enableRecording &&
+          isS3StorageEnabled && {
+            recordings_bucket: {
+              bucket_name: process.env.CAL_VIDEO_BUCKET_NAME,
+              bucket_region: process.env.CAL_VIDEO_BUCKET_REGION,
+              assume_role_arn: process.env.CAL_VIDEO_ASSUME_ROLE_ARN,
+              allow_api_access: true,
+              allow_streaming_from_bucket: false,
+            },
+          }),
         start_video_off: true,
         enable_transcription_storage: isScalePlanTrue,
-        ...(!!isScalePlanTrue && {
-          permissions: {
-            canAdmin: ["transcription"],
-          },
-        }),
+        ...(isScalePlanTrue &&
+          isS3StorageEnabled && {
+            permissions: {
+              canAdmin: ["transcription"],
+            },
+            transcription_bucket: {
+              bucket_name: process.env.CAL_VIDEO_BUCKET_NAME,
+              bucket_region: process.env.CAL_VIDEO_BUCKET_REGION,
+              assume_role_arn: process.env.CAL_VIDEO_ASSUME_ROLE_ARN,
+              allow_api_access: true,
+            },
+          }),
       },
     };
 
@@ -260,31 +386,33 @@ const DailyVideoApiAdapter = (): VideoApiAdapter => {
       url: dailyEvent.url,
     });
   }
-
+  // Region on which the DailyVideo room is created can be controlled by ENV var
+  // undefined region leaves the choice to DailyVideo
+  const region = getDailyVideoRegionFromEnv();
   return {
     /** Daily doesn't need to return busy times, so we return empty */
     getAvailability: () => {
       return Promise.resolve([]);
     },
     createMeeting: async (event: CalendarEvent): Promise<VideoCallData> =>
-      createOrUpdateMeeting("/rooms", event),
+      createOrUpdateMeeting("/rooms", event, region),
     deleteMeeting: async (uid: string): Promise<void> => {
       await fetcher(`/rooms/${uid}`, { method: "DELETE" });
       return Promise.resolve();
     },
     updateMeeting: (bookingRef: PartialReference, event: CalendarEvent): Promise<VideoCallData> =>
-      createOrUpdateMeeting(`/rooms/${bookingRef.uid}`, event),
+      createOrUpdateMeeting(`/rooms/${bookingRef.uid}`, event, region),
     getRecordings: async (roomName: string): Promise<GetRecordingsResponseSchema> => {
       try {
         const res = await fetcher(`/recordings?room_name=${roomName}`).then(
           getRecordingsResponseSchema.parse
         );
         return Promise.resolve(res);
-      } catch (err) {
+      } catch {
         throw new Error("Something went wrong! Unable to get recording");
       }
     },
-    createInstantCalVideoRoom: (endTime: string) => createInstantMeeting(endTime),
+    createInstantCalVideoRoom: (endTime: string) => createInstantMeeting(endTime, region),
     getRecordingDownloadLink: async (recordingId: string): Promise<GetAccessLinkResponseSchema> => {
       try {
         const res = await fetcher(`/recordings/${recordingId}/access-link?valid_for_secs=43200`).then(
@@ -298,9 +426,25 @@ const DailyVideoApiAdapter = (): VideoApiAdapter => {
     },
     getAllTranscriptsAccessLinkFromRoomName: async (roomName: string): Promise<Array<string>> => {
       try {
-        const res = await fetcher(`/rooms/${roomName}`).then(getRooms.parse);
-        const roomId = res.id;
-        const allTranscripts = await fetcher(`/transcript?roomId=${roomId}`).then(getTranscripts.parse);
+        const allTranscripts = await fetcher(`/transcript?room_name=${roomName}`).then(getTranscripts.parse);
+
+        if (!allTranscripts.data.length) return [];
+
+        const allTranscriptsIds = allTranscripts.data.map((transcript) => transcript.transcriptId);
+        const allTranscriptsAccessLink = await processTranscriptsInBatches(allTranscriptsIds);
+        const accessLinks = await Promise.all(allTranscriptsAccessLink);
+
+        return Promise.resolve(accessLinks);
+      } catch (err) {
+        console.log("err", err);
+        throw new Error("Something went wrong! Unable to get transcription access link");
+      }
+    },
+    getAllTranscriptsAccessLinkFromMeetingId: async (meetingId: string): Promise<Array<string>> => {
+      try {
+        const allTranscripts = await fetcher(`/transcript?mtgSessionId=${meetingId}`).then(
+          getTranscripts.parse
+        );
 
         if (!allTranscripts.data.length) return [];
 
@@ -357,6 +501,17 @@ const DailyVideoApiAdapter = (): VideoApiAdapter => {
       } catch (err) {
         console.error("err", err);
         throw new Error(`Something went wrong! Unable to checkIfRoomNameMatchesInRecording. ${err}`);
+      }
+    },
+    getMeetingInformation: async (roomName: string): Promise<TGetMeetingInformationResponsesSchema> => {
+      try {
+        const res = await fetcher(`/meetings?room=${encodeURIComponent(roomName)}`).then(
+          getMeetingInformationResponseSchema.parse
+        );
+        return res;
+      } catch (err) {
+        console.error("err", err);
+        throw new Error("Something went wrong! Unable to get meeting information");
       }
     },
   };

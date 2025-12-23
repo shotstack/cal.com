@@ -1,15 +1,23 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { useSearchParams } from "next/navigation";
-import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useCallback, useEffect } from "react";
+import { useSearchParams, usePathname, useRouter } from "next/navigation";
+import { useMemo, useCallback, useEffect, useRef } from "react";
+import React from "react";
 import { shallow } from "zustand/shallow";
 
-import dayjs from "@calcom/dayjs";
-import { sdkActionManager } from "@calcom/embed-core/embed-iframe";
+import {
+  sdkActionManager,
+  useIsEmbed,
+} from "@calcom/embed-core/embed-iframe";
+import { useBookerEmbedEvents } from "@calcom/embed-core/src/embed-iframe/react-hooks";
 import type { BookerProps } from "@calcom/features/bookings/Booker";
 import { Booker as BookerComponent } from "@calcom/features/bookings/Booker";
+import {
+  BookerStoreProvider,
+  useInitializeBookerStoreContext,
+  useBookerStoreContext,
+} from "@calcom/features/bookings/Booker/BookerStoreProvider";
 import { useBookerLayout } from "@calcom/features/bookings/Booker/components/hooks/useBookerLayout";
 import { useBookingForm } from "@calcom/features/bookings/Booker/components/hooks/useBookingForm";
 import { useBookings } from "@calcom/features/bookings/Booker/components/hooks/useBookings";
@@ -17,23 +25,37 @@ import { useCalendars } from "@calcom/features/bookings/Booker/components/hooks/
 import { useSlots } from "@calcom/features/bookings/Booker/components/hooks/useSlots";
 import { useVerifyCode } from "@calcom/features/bookings/Booker/components/hooks/useVerifyCode";
 import { useVerifyEmail } from "@calcom/features/bookings/Booker/components/hooks/useVerifyEmail";
-import { useBookerStore, useInitializeBookerStore } from "@calcom/features/bookings/Booker/store";
+import { useInitializeBookerStore } from "@calcom/features/bookings/Booker/store";
 import { useEvent, useScheduleForEvent } from "@calcom/features/bookings/Booker/utils/event";
 import { useBrandColors } from "@calcom/features/bookings/Booker/utils/use-brand-colors";
-import { DEFAULT_LIGHT_BRAND_COLOR, DEFAULT_DARK_BRAND_COLOR } from "@calcom/lib/constants";
+import type { getPublicEvent } from "@calcom/features/eventtypes/lib/getPublicEvent";
+import { DEFAULT_LIGHT_BRAND_COLOR, DEFAULT_DARK_BRAND_COLOR, WEBAPP_URL } from "@calcom/lib/constants";
 import { useRouterQuery } from "@calcom/lib/hooks/useRouterQuery";
-import { BookerLayouts } from "@calcom/prisma/zod-utils";
+import { localStorage } from "@calcom/lib/webstorage";
 
-type BookerWebWrapperAtomProps = BookerProps;
+export type BookerWebWrapperAtomProps = BookerProps & {
+  eventData?: NonNullable<Awaited<ReturnType<typeof getPublicEvent>>>;
+};
 
-export const BookerWebWrapper = (props: BookerWebWrapperAtomProps) => {
+const BookerWebWrapperComponent = (props: BookerWebWrapperAtomProps) => {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const event = useEvent();
-  const bookerLayout = useBookerLayout(event.data);
+  const clientFetchedEvent = useEvent({
+    disabled: !!props.eventData,
+    fromRedirectOfNonOrgLink: props.entity.fromRedirectOfNonOrgLink,
+  });
+  const event = props.eventData
+    ? {
+      data: props.eventData,
+      isSuccess: true,
+      isError: false,
+      isPending: false,
+    }
+    : clientFetchedEvent;
 
-  const selectedDate = searchParams?.get("date");
+  const bookerLayout = useBookerLayout(event.data?.profile?.bookerLayouts);
+  const selectedDate = useBookerStoreContext((state) => state.selectedDate);
   const isRedirect = searchParams?.get("redirected") === "true" || false;
   const fromUserNameRedirected = searchParams?.get("username") || "";
   const rescheduleUid =
@@ -42,25 +64,34 @@ export const BookerWebWrapper = (props: BookerWebWrapperAtomProps) => {
     typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("rescheduledBy") : null;
   const bookingUid =
     typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("bookingUid") : null;
-  const date = dayjs(selectedDate).format("YYYY-MM-DD");
+  const timezone = searchParams?.get("cal.tz") || null;
 
   useEffect(() => {
     // This event isn't processed by BookingPageTagManager because BookingPageTagManager hasn't loaded when it is fired. I think we should have a queue in fire method to handle this.
     sdkActionManager?.fire("navigatedToBooker", {});
   }, []);
-
   useInitializeBookerStore({
     ...props,
-    eventId: event?.data?.id,
+    eventId: props.entity.eventTypeId ?? event?.data?.id,
     rescheduleUid,
     rescheduledBy,
     bookingUid: bookingUid,
-    layout: bookerLayout.defaultLayout,
+    layout: bookerLayout.isMobile ? "mobile" : bookerLayout.defaultLayout,
     org: props.entity.orgSlug,
+    timezone,
+  });
+  useInitializeBookerStoreContext({
+    ...props,
+    eventId: props.entity.eventTypeId ?? event?.data?.id,
+    rescheduleUid,
+    rescheduledBy,
+    bookingUid: bookingUid,
+    layout: bookerLayout.isMobile ? "mobile" : bookerLayout.defaultLayout,
+    org: props.entity.orgSlug,
+    timezone,
   });
 
-  const [bookerState, _] = useBookerStore((state) => [state.state, state.setState], shallow);
-  const [dayCount] = useBookerStore((state) => [state.dayCount, state.setDayCount], shallow);
+  const [dayCount] = useBookerStoreContext((state) => [state.dayCount, state.setDayCount], shallow);
 
   const { data: session } = useSession();
   const routerQuery = useRouterQuery();
@@ -101,36 +132,28 @@ export const BookerWebWrapper = (props: BookerWebWrapperAtomProps) => {
     requiresBookerEmailVerification: event?.data?.requiresBookerEmailVerification,
     onVerifyEmail: bookerForm.beforeVerifyEmail,
   });
-  const slots = useSlots(event);
+  const slots = useSlots(event?.data ? { id: event.data.id, length: event.data.length } : null);
 
-  const prefetchNextMonth =
-    (bookerLayout.layout === BookerLayouts.WEEK_VIEW &&
-      !!bookerLayout.extraDays &&
-      dayjs(date).month() !== dayjs(date).add(bookerLayout.extraDays, "day").month()) ||
-    (bookerLayout.layout === BookerLayouts.COLUMN_VIEW &&
-      dayjs(date).month() !== dayjs(date).add(bookerLayout.columnViewExtraDays.current, "day").month());
+  const isEmbed = useIsEmbed();
 
-  const monthCount =
-    ((bookerLayout.layout !== BookerLayouts.WEEK_VIEW && bookerState === "selecting_time") ||
-      bookerLayout.layout === BookerLayouts.COLUMN_VIEW) &&
-    dayjs(date).add(1, "month").month() !==
-      dayjs(date).add(bookerLayout.columnViewExtraDays.current, "day").month()
-      ? 2
-      : undefined;
   /**
    * Prioritize dateSchedule load
    * Component will render but use data already fetched from here, and no duplicate requests will be made
    * */
   const schedule = useScheduleForEvent({
-    prefetchNextMonth,
+    eventId: props.entity.eventTypeId ?? event.data?.id,
     username: props.username,
-    monthCount,
     dayCount,
     eventSlug: props.eventSlug,
     month: props.month,
     duration: props.duration,
     selectedDate,
     teamMemberEmail: props.teamMemberEmail,
+    fromRedirectOfNonOrgLink: props.entity.fromRedirectOfNonOrgLink,
+    isTeamEvent: props.isTeamEvent ?? !!event.data?.team,
+    useApiV2: props.useApiV2,
+    bookerLayout,
+    ...(props.entity.orgSlug ? { orgSlug: props.entity.orgSlug } : {}),
   });
   const bookings = useBookings({
     event,
@@ -140,8 +163,16 @@ export const BookerWebWrapper = (props: BookerWebWrapperAtomProps) => {
     teamMemberEmail: props.teamMemberEmail,
   });
 
+  useBookerEmbedEvents({
+    eventId: event.data?.id,
+    eventSlug: event.data?.slug,
+    schedule,
+  });
+
   const verifyCode = useVerifyCode({
     onSuccess: () => {
+      if (!bookerForm.formEmail) return;
+
       verifyEmail.setVerifiedEmail(bookerForm.formEmail);
       verifyEmail.setEmailVerificationModalVisible(false);
       bookings.handleBookEvent();
@@ -151,26 +182,35 @@ export const BookerWebWrapper = (props: BookerWebWrapperAtomProps) => {
   // Toggle query param for overlay calendar
   const onOverlaySwitchStateChange = useCallback(
     (state: boolean) => {
-      const current = new URLSearchParams(Array.from(searchParams?.entries() ?? []));
+      const url = new URL(window.location.href);
       if (state) {
-        current.set("overlayCalendar", "true");
+        url.searchParams.set("overlayCalendar", "true");
         localStorage.setItem("overlayCalendarSwitchDefault", "true");
       } else {
-        current.delete("overlayCalendar");
+        url.searchParams.delete("overlayCalendar");
         localStorage.removeItem("overlayCalendarSwitchDefault");
       }
-      // cast to string
-      const value = current.toString();
-      const query = value ? `?${value}` : "";
-      router.push(`${pathname}${query}`);
+      router.push(`${url.pathname}${url.search}`);
     },
-    [searchParams, pathname, router]
+    [router]
   );
   useBrandColors({
     brandColor: event.data?.profile.brandColor ?? DEFAULT_LIGHT_BRAND_COLOR,
     darkBrandColor: event.data?.profile.darkBrandColor ?? DEFAULT_DARK_BRAND_COLOR,
     theme: event.data?.profile.theme,
   });
+
+  const areInstantMeetingParametersSet = Boolean(
+    event.data?.instantMeetingParameters &&
+    searchParams &&
+    event.data.instantMeetingParameters?.every?.((param) =>
+      Array.from(searchParams.values()).includes(param)
+    )
+  );
+
+  useEffect(() => {
+    if (hasSession) onOverlaySwitchStateChange(true);
+  }, [hasSession]);
 
   return (
     <BookerComponent
@@ -180,17 +220,22 @@ export const BookerWebWrapper = (props: BookerWebWrapperAtomProps) => {
       }}
       onConnectNowInstantMeeting={() => {
         const newPath = `${pathname}?isInstantMeeting=true`;
-        router.push(newPath);
+
+        if (isEmbed) {
+          const fullUrl = `${new URL(document.URL).origin}/${newPath}`;
+          window.open(fullUrl, "_blank", "noopener,noreferrer");
+        } else {
+          router.push(newPath);
+        }
       }}
       onOverlayClickNoCalendar={() => {
         router.push("/apps/categories/calendar");
       }}
       onClickOverlayContinue={() => {
-        const currentUrl = new URL(window.location.href);
-        currentUrl.pathname = "/login/";
-        currentUrl.searchParams.set("callbackUrl", window.location.pathname);
-        currentUrl.searchParams.set("overlayCalendar", "true");
-        router.push(currentUrl.toString());
+        const newUrl = new URL(`${WEBAPP_URL}/login`);
+        newUrl.searchParams.set("callbackUrl", window.location.pathname);
+        newUrl.searchParams.set("overlayCalendar", "true");
+        router.push(newUrl.toString());
       }}
       onOverlaySwitchStateChange={onOverlaySwitchStateChange}
       sessionUsername={session?.user.username}
@@ -200,6 +245,7 @@ export const BookerWebWrapper = (props: BookerWebWrapperAtomProps) => {
       rescheduledBy={rescheduledBy}
       bookingUid={bookingUid}
       hasSession={hasSession}
+      hasValidLicense={session?.hasValidLicense ?? false}
       extraOptions={routerQuery}
       bookings={bookings}
       calendars={calendars}
@@ -211,6 +257,17 @@ export const BookerWebWrapper = (props: BookerWebWrapperAtomProps) => {
       schedule={schedule}
       verifyCode={verifyCode}
       isPlatform={false}
+      areInstantMeetingParametersSet={areInstantMeetingParametersSet}
+      userLocale={session?.user.locale}
+      renderCaptcha
     />
+  );
+};
+
+export const BookerWebWrapper = (props: BookerWebWrapperAtomProps) => {
+  return (
+    <BookerStoreProvider>
+      <BookerWebWrapperComponent {...props} />
+    </BookerStoreProvider>
   );
 };

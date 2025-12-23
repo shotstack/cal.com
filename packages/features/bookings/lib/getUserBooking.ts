@@ -1,7 +1,7 @@
 import prisma from "@calcom/prisma";
 
 const getUserBooking = async (uid: string) => {
-  const bookingInfo = await prisma.booking.findFirst({
+  const bookingInfo = await prisma.booking.findUnique({
     where: {
       uid: uid,
     },
@@ -19,11 +19,13 @@ const getUserBooking = async (uid: string) => {
       status: true,
       metadata: true,
       cancellationReason: true,
+      cancelledBy: true,
       responses: true,
       rejectionReason: true,
       userPrimaryEmail: true,
       fromReschedule: true,
       rescheduled: true,
+      rescheduledBy: true,
       user: {
         select: {
           id: true,
@@ -39,6 +41,10 @@ const getUserBooking = async (uid: string) => {
           name: true,
           email: true,
           timeZone: true,
+          phoneNumber: true,
+        },
+        orderBy: {
+          id: "asc",
         },
       },
       eventTypeId: true,
@@ -48,11 +54,21 @@ const getUserBooking = async (uid: string) => {
           slug: true,
           timeZone: true,
           schedulingType: true,
+          hideOrganizerEmail: true,
         },
       },
       seatsReferences: {
         select: {
           referenceUid: true,
+        },
+      },
+      tracking: {
+        select: {
+          utm_source: true,
+          utm_medium: true,
+          utm_campaign: true,
+          utm_term: true,
+          utm_content: true,
         },
       },
     },

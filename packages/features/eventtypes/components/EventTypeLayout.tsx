@@ -1,37 +1,35 @@
-import type { TFunction } from "next-i18next";
 import { useMemo, useState, Suspense } from "react";
 import type { UseFormReturn } from "react-hook-form";
 
 import useLockedFieldsManager from "@calcom/features/ee/managed-event-types/hooks/useLockedFieldsManager";
 import { EventTypeEmbedButton, EventTypeEmbedDialog } from "@calcom/features/embed/EventTypeEmbed";
-import type { FormValues, AvailabilityOption } from "@calcom/features/eventtypes/lib/types";
+import type { FormValues } from "@calcom/features/eventtypes/lib/types";
 import type { EventTypeSetupProps } from "@calcom/features/eventtypes/lib/types";
-import Shell from "@calcom/features/shell/Shell";
-import { classNames } from "@calcom/lib";
-import getPaymentAppData from "@calcom/lib/getPaymentAppData";
+import WebShell from "@calcom/features/shell/Shell";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { SchedulingType } from "@calcom/prisma/enums";
-import type { VerticalTabItemProps } from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+import { Button } from "@calcom/ui/components/button";
+import { ButtonGroup } from "@calcom/ui/components/buttonGroup";
+import { VerticalDivider } from "@calcom/ui/components/divider";
 import {
-  Button,
-  ButtonGroup,
   DropdownMenuSeparator,
   Dropdown,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownItem,
   DropdownMenuTrigger,
-  HorizontalTabs,
-  Label,
-  Icon,
-  showToast,
-  Skeleton,
-  Switch,
-  Tooltip,
-  VerticalDivider,
-  VerticalTabs,
-} from "@calcom/ui";
+} from "@calcom/ui/components/dropdown";
+import { Label } from "@calcom/ui/components/form";
+import { Switch } from "@calcom/ui/components/form";
+import { Icon } from "@calcom/ui/components/icon";
+import { HorizontalTabs, VerticalTabs } from "@calcom/ui/components/navigation";
+import type { VerticalTabItemProps } from "@calcom/ui/components/navigation";
+import { Skeleton } from "@calcom/ui/components/skeleton";
+import { showToast } from "@calcom/ui/components/toast";
+import { Tooltip } from "@calcom/ui/components/tooltip";
 
+import { Shell as PlatformShell } from "../../../platform/atoms/src/components/ui/shell";
 import { DeleteDialog } from "./dialogs/DeleteDialog";
 
 type Props = {
@@ -40,74 +38,17 @@ type Props = {
   currentUserMembership: EventTypeSetupProps["currentUserMembership"];
   team: EventTypeSetupProps["team"];
   disableBorder?: boolean;
-  enabledAppsNumber: number;
-  installedAppsNumber: number;
-  enabledWorkflowsNumber: number;
   formMethods: UseFormReturn<FormValues>;
   isUpdateMutationLoading?: boolean;
-  availability?: AvailabilityOption;
   isUserOrganizationAdmin: boolean;
   bookerUrl: string;
-  activeWebhooksNumber: number;
-  onDelete: () => void;
+  onDelete: (id: number) => void;
+  isDeleting?: boolean;
+  isPlatform?: boolean;
+  tabsNavigation: VerticalTabItemProps[];
+  allowDelete?: boolean;
+  saveButtonRef?: React.RefObject<HTMLButtonElement>;
 };
-
-type getNavigationProps = {
-  t: TFunction;
-  length: number;
-  id: number;
-  multipleDuration?: EventTypeSetupProps["eventType"]["metadata"]["multipleDuration"];
-  enabledAppsNumber: number;
-  enabledWorkflowsNumber: number;
-  installedAppsNumber: number;
-  availability: AvailabilityOption | undefined;
-};
-
-function getNavigation({
-  length,
-  id,
-  multipleDuration,
-  t,
-  enabledAppsNumber,
-  installedAppsNumber,
-  enabledWorkflowsNumber,
-}: getNavigationProps) {
-  const duration = multipleDuration?.map((duration) => ` ${duration}`) || length;
-
-  return [
-    {
-      name: "event_setup_tab_title",
-      href: `/event-types/${id}?tabName=setup`,
-      icon: "link",
-      info: `${duration} ${t("minute_timeUnit")}`, // TODO: Get this from props
-    },
-    {
-      name: "event_limit_tab_title",
-      href: `/event-types/${id}?tabName=limits`,
-      icon: "clock",
-      info: `event_limit_tab_description`,
-    },
-    {
-      name: "event_advanced_tab_title",
-      href: `/event-types/${id}?tabName=advanced`,
-      icon: "sliders-vertical",
-      info: `event_advanced_tab_description`,
-    },
-    {
-      name: "apps",
-      href: `/event-types/${id}?tabName=apps`,
-      icon: "grid-3x3",
-      //TODO: Handle proper translation with count handling
-      info: `${installedAppsNumber} apps, ${enabledAppsNumber} ${t("active")}`,
-    },
-    {
-      name: "workflows",
-      href: `/event-types/${id}?tabName=workflows`,
-      icon: "zap",
-      info: `${enabledWorkflowsNumber} ${t("active")}`,
-    },
-  ] satisfies VerticalTabItemProps[];
-}
 
 function EventTypeSingleLayout({
   children,
@@ -115,16 +56,16 @@ function EventTypeSingleLayout({
   currentUserMembership,
   team,
   disableBorder,
-  enabledAppsNumber,
-  installedAppsNumber,
-  enabledWorkflowsNumber,
   isUpdateMutationLoading,
   formMethods,
-  availability,
   isUserOrganizationAdmin,
   bookerUrl,
-  activeWebhooksNumber,
   onDelete,
+  isDeleting,
+  isPlatform,
+  tabsNavigation,
+  allowDelete = true,
+  saveButtonRef,
 }: Props) {
   const { t } = useLocale();
   const eventTypesLockedByOrg = eventType.team?.parent?.organizationSettings?.lockEventTypeCreationForUsers;
@@ -142,110 +83,7 @@ function EventTypeSingleLayout({
     translate: t,
     formMethods,
   });
-
-  const length = formMethods.watch("length");
-  const multipleDuration = formMethods.watch("metadata")?.multipleDuration;
-
-  const watchSchedulingType = formMethods.watch("schedulingType");
-  const watchChildrenCount = formMethods.watch("children").length;
-
-  const paymentAppData = getPaymentAppData(eventType);
-  const requirePayment = paymentAppData.price > 0;
-
-  // Define tab navigation here
-  const EventTypeTabs = useMemo(() => {
-    const navigation: VerticalTabItemProps[] = getNavigation({
-      t,
-      length,
-      multipleDuration,
-      id: formMethods.getValues("id"),
-      enabledAppsNumber,
-      installedAppsNumber,
-      enabledWorkflowsNumber,
-      availability,
-    });
-
-    if (!requirePayment) {
-      navigation.splice(3, 0, {
-        name: "recurring",
-        href: `/event-types/${formMethods.getValues("id")}?tabName=recurring`,
-        icon: "repeat",
-        info: `recurring_event_tab_description`,
-      });
-    }
-    navigation.splice(1, 0, {
-      name: "availability",
-      href: `/event-types/${formMethods.getValues("id")}?tabName=availability`,
-      icon: "calendar",
-      info:
-        isManagedEventType || isChildrenManagedEventType
-          ? formMethods.getValues("schedule") === null
-            ? "members_default_schedule"
-            : isChildrenManagedEventType
-            ? `${
-                formMethods.getValues("scheduleName")
-                  ? `${formMethods.getValues("scheduleName")} - ${t("managed")}`
-                  : `default_schedule_name`
-              }`
-            : formMethods.getValues("scheduleName") ?? `default_schedule_name`
-          : formMethods.getValues("scheduleName") ?? `default_schedule_name`,
-    });
-    // If there is a team put this navigation item within the tabs
-    if (team) {
-      navigation.splice(2, 0, {
-        name: "assignment",
-        href: `/event-types/${formMethods.getValues("id")}?tabName=team`,
-        icon: "users",
-        info: `${t(watchSchedulingType?.toLowerCase() ?? "")}${
-          isManagedEventType ? ` - ${t("number_member", { count: watchChildrenCount || 0 })}` : ""
-        }`,
-      });
-    }
-    const showWebhooks = !(isManagedEventType || isChildrenManagedEventType);
-    if (showWebhooks) {
-      if (team) {
-        navigation.push({
-          name: "instant_tab_title",
-          href: `/event-types/${eventType.id}?tabName=instant`,
-          icon: "phone-call",
-          info: `instant_event_tab_description`,
-        });
-      }
-      navigation.push({
-        name: "webhooks",
-        href: `/event-types/${formMethods.getValues("id")}?tabName=webhooks`,
-        icon: "webhook",
-        info: `${activeWebhooksNumber} ${t("active")}`,
-      });
-    }
-    const hidden = true; // hidden while in alpha trial. you can access it with tabName=ai
-    if (team && hidden) {
-      navigation.push({
-        name: "Cal.ai",
-        href: `/event-types/${eventType.id}?tabName=ai`,
-        icon: "sparkles",
-        info: "cal_ai_event_tab_description", // todo `cal_ai_event_tab_description`,
-      });
-    }
-    return navigation;
-  }, [
-    t,
-    enabledAppsNumber,
-    installedAppsNumber,
-    enabledWorkflowsNumber,
-    availability,
-    isManagedEventType,
-    isChildrenManagedEventType,
-    team,
-    length,
-    requirePayment,
-    multipleDuration,
-    formMethods.getValues("id"),
-    watchSchedulingType,
-    watchChildrenCount,
-    activeWebhooksNumber,
-  ]);
-
+  const EventTypeTabs = tabsNavigation;
   const permalink = `${bookerUrl}/${
     team ? `${!team.parentId ? "team/" : ""}${team.slug}` : formMethods.getValues("users")[0].username
   }/${eventType.slug}`;
@@ -254,10 +92,15 @@ function EventTypeSingleLayout({
     team ? `team/${team.slug}` : formMethods.getValues("users")[0].username
   }/${formMethods.getValues("slug")}`;
   const isManagedEvent = formMethods.getValues("schedulingType") === SchedulingType.MANAGED ? "_managed" : "";
-  // const title = formMethods.watch("title");
+
+  const [Shell] = useMemo(() => {
+    return isPlatform ? [PlatformShell] : [WebShell];
+  }, [isPlatform]);
+  const teamId = eventType.team?.id;
+
   return (
     <Shell
-      backPath="/event-types"
+      backPath={teamId ? `/event-types?teamId=${teamId}` : "/event-types"}
       title={`${eventType.title} | ${t("event_type")}`}
       heading={eventType.title}
       CTA={
@@ -266,7 +109,7 @@ function EventTypeSingleLayout({
             <>
               <div
                 className={classNames(
-                  "sm:hover:bg-muted hidden cursor-pointer items-center rounded-md transition",
+                  "sm:hover:bg-cal-muted hidden cursor-pointer items-center rounded-md transition",
                   formMethods.watch("hidden") ? "pl-2" : "",
                   "lg:flex"
                 )}>
@@ -304,45 +147,51 @@ function EventTypeSingleLayout({
           <ButtonGroup combined containerProps={{ className: "border-default hidden lg:flex" }}>
             {!isManagedEventType && (
               <>
-                {/* We have to warp this in tooltip as it has a href which disabels the tooltip on buttons */}
-                <Tooltip content={t("preview")} side="bottom" sideOffset={4}>
+                {/* We have to warp this in tooltip as it has a href which disables the tooltip on buttons */}
+                {!isPlatform && (
+                  <Tooltip content={t("preview")} side="bottom" sideOffset={4}>
+                    <Button
+                      color="secondary"
+                      data-testid="preview-button"
+                      target="_blank"
+                      variant="icon"
+                      href={permalink}
+                      rel="noreferrer"
+                      StartIcon="external-link"
+                    />
+                  </Tooltip>
+                )}
+
+                {!isPlatform && (
                   <Button
                     color="secondary"
-                    data-testid="preview-button"
-                    target="_blank"
                     variant="icon"
-                    href={permalink}
-                    rel="noreferrer"
-                    StartIcon="external-link"
+                    StartIcon="link"
+                    tooltip={t("copy_link")}
+                    tooltipSide="bottom"
+                    tooltipOffset={4}
+                    onClick={() => {
+                      navigator.clipboard.writeText(permalink);
+                      showToast("Link copied!", "success");
+                    }}
                   />
-                </Tooltip>
-
-                <Button
-                  color="secondary"
-                  variant="icon"
-                  StartIcon="link"
-                  tooltip={t("copy_link")}
-                  tooltipSide="bottom"
-                  tooltipOffset={4}
-                  onClick={() => {
-                    navigator.clipboard.writeText(permalink);
-                    showToast("Link copied!", "success");
-                  }}
-                />
-                <EventTypeEmbedButton
-                  embedUrl={encodeURIComponent(embedLink)}
-                  StartIcon="code"
-                  color="secondary"
-                  variant="icon"
-                  namespace={eventType.slug}
-                  tooltip={t("embed")}
-                  tooltipSide="bottom"
-                  tooltipOffset={4}
-                  eventId={formMethods.getValues("id")}
-                />
+                )}
+                {!isPlatform && (
+                  <EventTypeEmbedButton
+                    embedUrl={encodeURIComponent(embedLink)}
+                    StartIcon="code"
+                    color="secondary"
+                    variant="icon"
+                    namespace={eventType.slug}
+                    tooltip={t("embed")}
+                    tooltipSide="bottom"
+                    tooltipOffset={4}
+                    eventId={formMethods.getValues("id")}
+                  />
+                )}
               </>
             )}
-            {!isChildrenManagedEventType && (
+            {!isChildrenManagedEventType && allowDelete && (
               <Button
                 color="destructive"
                 variant="icon"
@@ -356,7 +205,7 @@ function EventTypeSingleLayout({
             )}
           </ButtonGroup>
 
-          <VerticalDivider className="hidden lg:block" />
+          {(!isPlatform || (isPlatform && allowDelete)) && <VerticalDivider className="hidden lg:block" />}
 
           <Dropdown>
             <DropdownMenuTrigger asChild>
@@ -384,16 +233,18 @@ function EventTypeSingleLayout({
                   {t("copy_link")}
                 </DropdownItem>
               </DropdownMenuItem>
-              <DropdownMenuItem className="focus:ring-muted">
-                <DropdownItem
-                  type="button"
-                  color="destructive"
-                  StartIcon="trash"
-                  disabled={!hasPermsToDelete}
-                  onClick={() => setDeleteDialogOpen(true)}>
-                  {t("delete")}
-                </DropdownItem>
-              </DropdownMenuItem>
+              {allowDelete && (
+                <DropdownMenuItem className="focus:ring-muted">
+                  <DropdownItem
+                    type="button"
+                    color="destructive"
+                    StartIcon="trash"
+                    disabled={!hasPermsToDelete}
+                    onClick={() => setDeleteDialogOpen(true)}>
+                    {t("delete")}
+                  </DropdownItem>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuSeparator />
               <div className="hover:bg-subtle flex h-9 cursor-pointer flex-row items-center justify-between px-4 py-2 transition">
                 <Skeleton
@@ -414,6 +265,7 @@ function EventTypeSingleLayout({
           </Dropdown>
           <div className="border-default border-l-2" />
           <Button
+            ref={saveButtonRef}
             className="ml-4 lg:ml-0"
             type="submit"
             loading={isUpdateMutationLoading}
@@ -424,11 +276,15 @@ function EventTypeSingleLayout({
           </Button>
         </div>
       }>
-      <Suspense fallback={<Icon name="loader" />}>
+      <Suspense fallback={
+        <div className="flex h-64 items-center justify-center">
+          <Icon name="loader" className="h-5 w-5 animate-spin" />
+        </div>
+      }>
         <div className="flex flex-col xl:flex-row xl:space-x-6">
           <div className="hidden xl:block">
             <VerticalTabs
-              className="primary-navigation"
+              className="primary-navigation w-64"
               tabs={EventTypeTabs}
               sticky
               linkShallow
@@ -455,9 +311,10 @@ function EventTypeSingleLayout({
         open={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         onDelete={onDelete}
+        isDeleting={isDeleting}
       />
 
-      <EventTypeEmbedDialog />
+      {!isPlatform && <EventTypeEmbedDialog />}
     </Shell>
   );
 }

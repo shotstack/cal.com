@@ -2,28 +2,30 @@ import type { VariantProps } from "class-variance-authority";
 import { cva } from "class-variance-authority";
 import React from "react";
 
-import classNames from "@calcom/lib/classNames";
+import classNames from "@calcom/ui/classNames";
 
-import { Icon, type IconName } from "../..";
+import { Icon } from "../icon";
+import type { IconName } from "../icon";
 
-export const badgeStyles = cva("font-medium inline-flex items-center justify-center rounded gap-x-1", {
+export const badgeStyles = cva("font-medium inline-flex items-center justify-center rounded-[4px] gap-x-1", {
   variants: {
     variant: {
       default: "bg-attention text-attention",
       warning: "bg-attention text-attention",
       orange: "bg-attention text-attention",
-      success: "bg-success text-success",
-      green: "bg-success text-success",
+      success: "bg-cal-success text-success",
+      green: "bg-cal-success text-success",
       gray: "bg-emphasis text-emphasis",
-      blue: "bg-info text-info",
+      blue: "bg-cal-info text-info",
       red: "bg-error text-error",
       error: "bg-error text-error",
       grayWithoutHover: "bg-gray-100 text-gray-800 dark:bg-darkgray-200 dark:text-darkgray-800",
+      purple: "bg-purple-50 text-purple-800",
     },
     size: {
-      sm: "px-1 py-0.5 text-xs leading-3",
-      md: "py-1 px-1.5 text-xs leading-3",
-      lg: "py-1 px-2 text-sm leading-4",
+      sm: "px-1 py-1 text-[10px] leading-none",
+      md: "py-1 px-1.5 text-xs leading-none",
+      lg: "py-1 px-1.5 text-sm leading-none rounded-lg",
     },
   },
   defaultVariants: {
@@ -38,13 +40,16 @@ type IconOrDot =
   | {
       startIcon?: IconName;
       withDot?: never;
+      customDot?: never;
     }
-  | { startIcon?: never; withDot?: true };
+  | { startIcon?: never; withDot?: true; customDot?: never }
+  | { startIcon?: never; withDot?: never; customDot?: React.ReactNode };
 
 export type BadgeBaseProps = InferredBadgeStyles & {
   children: React.ReactNode;
   rounded?: boolean;
   customStartIcon?: React.ReactNode;
+  customDot?: React.ReactNode;
 } & IconOrDot;
 
 export type BadgeProps =
@@ -67,6 +72,7 @@ export const Badge = function Badge(props: BadgeProps) {
     withDot,
     children,
     rounded,
+    customDot,
     ...passThroughProps
   } = props;
   const isButton = "onClick" in passThroughProps && passThroughProps.onClick !== undefined;
@@ -79,10 +85,19 @@ export const Badge = function Badge(props: BadgeProps) {
 
   const Children = () => (
     <>
-      {withDot ? <Icon name="dot" data-testid="go-primitive-dot" className="h-3 w-3 stroke-[3px]" /> : null}
+      {withDot ? (
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" data-testid="go-primitive-dot">
+          <circle cx="4" cy="4" r="4" />
+        </svg>
+      ) : null}
       {customStartIcon ||
         (StartIcon ? (
-          <Icon name={StartIcon} data-testid="start-icon" className="h-3 w-3 stroke-[3px]" />
+          <Icon
+            name={StartIcon}
+            data-testid="start-icon"
+            className="stroke-[3px]"
+            style={{ width: 12, height: 12 }}
+          />
         ) : null)}
       {children}
     </>

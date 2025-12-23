@@ -4,26 +4,24 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
+import { Dialog } from "@calcom/features/components/controlled-dialog";
+import { EventTypeDuplicateInput } from "@calcom/features/eventtypes/lib/types";
 import { useCompatSearchParams } from "@calcom/lib/hooks/useCompatSearchParams";
+import { useDebounce } from "@calcom/lib/hooks/useDebounce";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { useTypedQuery } from "@calcom/lib/hooks/useTypedQuery";
 import { HttpError } from "@calcom/lib/http-error";
 import { md } from "@calcom/lib/markdownIt";
 import slugify from "@calcom/lib/slugify";
 import turndown from "@calcom/lib/turndownService";
-import { EventTypeDuplicateInput } from "@calcom/prisma/zod/custom/eventtype";
 import { trpc } from "@calcom/trpc/react";
-import {
-  Button,
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogFooter,
-  Form,
-  showToast,
-  TextField,
-  Editor,
-} from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { DialogContent, DialogFooter, DialogClose } from "@calcom/ui/components/dialog";
+import { Editor } from "@calcom/ui/components/editor";
+import { Form } from "@calcom/ui/components/form";
+import { TextField } from "@calcom/ui/components/form";
+import { showToast } from "@calcom/ui/components/toast";
+import { revalidateEventTypesList } from "@calcom/web/app/(use-page-wrapper)/(main-nav)/event-types/actions";
 
 const querySchema = z.object({
   title: z.string().min(1),
@@ -36,7 +34,7 @@ const querySchema = z.object({
   parentId: z.coerce.number().optional().nullable(),
 });
 
-const DuplicateDialog = ({ isInfiniteScrollEnabled }: { isInfiniteScrollEnabled?: boolean }) => {
+const DuplicateDialog = () => {
   const utils = trpc.useUtils();
 
   const searchParams = useCompatSearchParams();
@@ -46,6 +44,8 @@ const DuplicateDialog = ({ isInfiniteScrollEnabled }: { isInfiniteScrollEnabled?
   const {
     data: { pageSlug, slug, ...defaultValues },
   } = useTypedQuery(querySchema);
+  const [searchTerm, setSearchTerm] = useState("");
+  const debouncedSearchTerm = useDebounce(searchTerm, 500);
 
   // react hook form
   const form = useForm({
@@ -70,19 +70,17 @@ const DuplicateDialog = ({ isInfiniteScrollEnabled }: { isInfiniteScrollEnabled?
     }
   }, [searchParams?.get("dialog")]);
 
-  const duplicateMutation = trpc.viewer.eventTypes.duplicate.useMutation({
+  const duplicateMutation = trpc.viewer.eventTypesHeavy.duplicate.useMutation({
     onSuccess: async ({ eventType }) => {
       await router.replace(`/event-types/${eventType.id}`);
 
-      if (isInfiniteScrollEnabled) {
-        await utils.viewer.eventTypes.getUserEventGroups.invalidate();
-        await utils.viewer.eventTypes.getEventTypesFromGroup.invalidate({
-          limit: 10,
-          group: { teamId: eventType?.teamId, parentId: eventType?.parentId },
-        });
-      } else {
-        await utils.viewer.eventTypes.getByViewer.invalidate();
-      }
+      await utils.viewer.eventTypes.getUserEventGroups.invalidate();
+      revalidateEventTypesList();
+      await utils.viewer.eventTypes.getEventTypesFromGroup.invalidate({
+        limit: 10,
+        searchQuery: debouncedSearchTerm,
+        group: { teamId: eventType?.teamId, parentId: eventType?.parentId },
+      });
 
       showToast(
         t("event_type_created_successfully", {
@@ -95,6 +93,13 @@ const DuplicateDialog = ({ isInfiniteScrollEnabled }: { isInfiniteScrollEnabled?
       if (err instanceof HttpError) {
         const message = `${err.statusCode}: ${err.message}`;
         showToast(message, "error");
+        return;
+      }
+
+      if (err.data?.code === "CONFLICT") {
+        const message = t("duplicate_event_slug_conflict");
+        showToast(message, "error");
+        return;
       }
 
       if (err.data?.code === "INTERNAL_SERVER_ERROR" || err.data?.code === "BAD_REQUEST") {
@@ -119,7 +124,7 @@ const DuplicateDialog = ({ isInfiniteScrollEnabled }: { isInfiniteScrollEnabled?
           handleSubmit={(values) => {
             duplicateMutation.mutate(values);
           }}>
-          <div className="-mt-2 space-y-5">
+          <div className="-mt-2 stack-y-5">
             <TextField
               label={t("title")}
               placeholder={t("quick_chat")}
@@ -153,6 +158,9 @@ const DuplicateDialog = ({ isInfiniteScrollEnabled }: { isInfiniteScrollEnabled?
                   </>
                 }
                 {...register("slug")}
+                 onChange={(e) => {
+                  form.setValue("slug", slugify(e?.target.value), { shouldTouch: true });
+                }}
               />
             )}
 

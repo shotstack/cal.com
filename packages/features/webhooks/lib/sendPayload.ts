@@ -1,11 +1,15 @@
-import type { Payment, Webhook } from "@prisma/client";
 import { createHmac } from "crypto";
 import { compile } from "handlebars";
 
 import type { TGetTranscriptAccessLink } from "@calcom/app-store/dailyvideo/zod";
 import { getHumanReadableLocationValue } from "@calcom/app-store/locations";
-import { getUTCOffsetByTimezone } from "@calcom/lib/date-fns";
+import type { WebhookSubscriber, PaymentData } from "@calcom/features/webhooks/lib/dto/types";
+import { DelegationCredentialErrorPayloadType } from "@calcom/features/webhooks/lib/dto/types";
+import { getUTCOffsetByTimezone } from "@calcom/lib/dayjs";
 import type { CalendarEvent, Person } from "@calcom/types/Calendar";
+
+// Minimal webhook shape for sending payloads (subset of WebhookSubscriber)
+type WebhookForPayload = Pick<WebhookSubscriber, "subscriberUrl" | "appId" | "payloadTemplate">;
 
 type ContentType = "application/json" | "application/x-www-form-urlencoded";
 
@@ -33,7 +37,7 @@ export type WithUTCOffsetType<T> = T & {
 export type BookingNoShowUpdatedPayload = {
   message: string;
   bookingUid: string;
-  bookingId: number;
+  bookingId?: number;
   attendees: { email: string; noShow: boolean }[];
 };
 
@@ -44,10 +48,41 @@ export type TranscriptionGeneratedPayload = {
   };
 };
 
-export type WebhookDataType = CalendarEvent &
+export type OOOEntryPayloadType = {
+  oooEntry: {
+    id: number;
+    start: string;
+    end: string;
+    createdAt: string;
+    updatedAt: string;
+    notes: string | null;
+    reason: {
+      emoji?: string;
+      reason?: string;
+    };
+    reasonId: number;
+    user: {
+      id: number;
+      name: string | null;
+      username: string | null;
+      timeZone: string;
+      email: string;
+    };
+    toUser: {
+      id: number;
+      name?: string | null;
+      username?: string | null;
+      timeZone?: string;
+      email?: string;
+    } | null;
+    uuid: string;
+  };
+};
+
+export type EventPayloadType = CalendarEvent &
   TranscriptionGeneratedPayload &
-  // BookingNoShowUpdatedPayload & // This breaks all other webhooks
   EventTypeInfo & {
+    uid?: string | null;
     metadata?: { [key: string]: string | number | boolean | null };
     bookingId?: number;
     status?: string;
@@ -56,37 +91,41 @@ export type WebhookDataType = CalendarEvent &
     rescheduleUid?: string;
     rescheduleStartTime?: string;
     rescheduleEndTime?: string;
-    triggerEvent: string;
-    createdAt: string;
     downloadLink?: string;
     paymentId?: number;
     rescheduledBy?: string;
     cancelledBy?: string;
-    paymentData?: Payment;
+    paymentData?: PaymentData;
   };
 
-function addUTCOffset(
-  data: Omit<WebhookDataType, "createdAt" | "triggerEvent">
-): WithUTCOffsetType<WebhookDataType> {
-  if (data.organizer?.timeZone) {
-    (data.organizer as Person & UTCOffset).utcOffset = getUTCOffsetByTimezone(
-      data.organizer.timeZone,
-      data.startTime
-    );
+export type WebhookPayloadType =
+  | EventPayloadType
+  | OOOEntryPayloadType
+  | BookingNoShowUpdatedPayload
+  | DelegationCredentialErrorPayloadType;
+
+type WebhookDataType = WebhookPayloadType & { triggerEvent: string; createdAt: string };
+
+function addUTCOffset(data: WebhookPayloadType): WithUTCOffsetType<WebhookPayloadType> {
+  if (isEventPayload(data)) {
+    if (data.organizer?.timeZone) {
+      (data.organizer as Person & UTCOffset).utcOffset = getUTCOffsetByTimezone(
+        data.organizer.timeZone,
+        data.startTime
+      );
+    }
+
+    if (data.attendees?.length) {
+      (data.attendees as (Person & UTCOffset)[]).forEach((attendee) => {
+        attendee.utcOffset = getUTCOffsetByTimezone(attendee.timeZone, data.startTime);
+      });
+    }
   }
 
-  if (data?.attendees?.length) {
-    (data.attendees as (Person & UTCOffset)[]).forEach((attendee) => {
-      attendee.utcOffset = getUTCOffsetByTimezone(attendee.timeZone, data.startTime);
-    });
-  }
-
-  return data as WithUTCOffsetType<WebhookDataType>;
+  return data as WithUTCOffsetType<WebhookPayloadType>;
 }
 
-function getZapierPayload(
-  data: WithUTCOffsetType<CalendarEvent & EventTypeInfo & { status?: string; createdAt: string }>
-): string {
+function getZapierPayload(data: WithUTCOffsetType<EventPayloadType & { createdAt: string }>): string {
   const attendees = (data.attendees as (Person & UTCOffset)[]).map((attendee) => {
     return {
       name: attendee.name,
@@ -100,6 +139,7 @@ function getZapierPayload(
   const location = getHumanReadableLocationValue(data.location || "", t);
 
   const body = {
+    uid: data.uid,
     title: data.title,
     description: data.description,
     customInputs: data.customInputs,
@@ -112,6 +152,7 @@ function getZapierPayload(
     cancellationReason: data.cancellationReason,
     user: {
       username: data.organizer.username,
+      usernameInOrg: data.organizer.usernameInOrg,
       name: data.organizer.name,
       email: data.organizer.email,
       timeZone: data.organizer.timeZone,
@@ -128,11 +169,18 @@ function getZapierPayload(
     },
     attendees: attendees,
     createdAt: data.createdAt,
+    metadata: {
+      videoCallUrl: data.metadata?.videoCallUrl,
+    },
   };
   return JSON.stringify(body);
 }
 
-function applyTemplate(template: string, data: WebhookDataType, contentType: ContentType) {
+function applyTemplate(
+  template: string,
+  data: WebhookDataType | Record<string, unknown>,
+  contentType: ContentType
+) {
   const compiled = compile(template)(data).replace(/&quot;/g, '"');
 
   if (contentType === "application/json") {
@@ -144,40 +192,69 @@ function applyTemplate(template: string, data: WebhookDataType, contentType: Con
 export function jsonParse(jsonString: string) {
   try {
     return JSON.parse(jsonString);
-  } catch (e) {
+  } catch {
     // don't do anything.
   }
   return false;
+}
+
+export function isOOOEntryPayload(data: WebhookPayloadType): data is OOOEntryPayloadType {
+  return "oooEntry" in data;
+}
+
+export function isNoShowPayload(data: WebhookPayloadType): data is BookingNoShowUpdatedPayload {
+  return "message" in data && "bookingUid" in data;
+}
+
+export function isDelegationCredentialErrorPayload(
+  data: WebhookPayloadType
+): data is DelegationCredentialErrorPayloadType {
+  return "error" in data && "credential" in data && "user" in data;
+}
+
+export function isEventPayload(data: WebhookPayloadType): data is EventPayloadType {
+  return !isNoShowPayload(data) && !isOOOEntryPayload(data) && !isDelegationCredentialErrorPayload(data);
 }
 
 const sendPayload = async (
   secretKey: string | null,
   triggerEvent: string,
   createdAt: string,
-  webhook: Pick<Webhook, "subscriberUrl" | "appId" | "payloadTemplate">,
-  data: Omit<WebhookDataType, "createdAt" | "triggerEvent">
+  webhook: WebhookForPayload,
+  data: WebhookPayloadType
 ) => {
   const { appId, payloadTemplate: template } = webhook;
 
   const contentType =
     !template || jsonParse(template) ? "application/json" : "application/x-www-form-urlencoded";
 
-  data.description = data.description || data.additionalNotes;
   data = addUTCOffset(data);
 
   let body;
-
   /* Zapier id is hardcoded in the DB, we send the raw data for this case  */
-  if (appId === "zapier") {
-    body = getZapierPayload({ ...data, createdAt });
-  } else if (template) {
-    body = applyTemplate(template, { ...data, triggerEvent, createdAt }, contentType);
-  } else {
-    body = JSON.stringify({
-      triggerEvent: triggerEvent,
-      createdAt: createdAt,
-      payload: data,
-    });
+  if (isEventPayload(data)) {
+    data.description = data.description || data.additionalNotes;
+    if (appId === "zapier") {
+      body = getZapierPayload({ ...data, createdAt });
+    }
+  }
+
+  if (body === undefined) {
+    if (
+      template &&
+      (isOOOEntryPayload(data) ||
+        isEventPayload(data) ||
+        isNoShowPayload(data) ||
+        isDelegationCredentialErrorPayload(data))
+    ) {
+      body = applyTemplate(template, { ...data, triggerEvent, createdAt }, contentType);
+    } else {
+      body = JSON.stringify({
+        triggerEvent: triggerEvent,
+        createdAt: createdAt,
+        payload: data,
+      });
+    }
   }
 
   return _sendPayload(secretKey, webhook, body, contentType);
@@ -194,19 +271,31 @@ export const sendGenericWebhookPayload = async ({
   secretKey: string | null;
   triggerEvent: string;
   createdAt: string;
-  webhook: Pick<Webhook, "subscriberUrl" | "appId" | "payloadTemplate">;
+  webhook: WebhookForPayload;
   data: Record<string, unknown>;
   rootData?: Record<string, unknown>;
 }) => {
-  const body = JSON.stringify({
+  const { payloadTemplate: template } = webhook;
+
+  const contentType =
+    !template || jsonParse(template) ? "application/json" : "application/x-www-form-urlencoded";
+
+  const defaultPayload = {
     // Added rootData props first so that using the known(i.e. triggerEvent, createdAt, payload) properties in rootData doesn't override the known properties
     ...rootData,
     triggerEvent: triggerEvent,
     createdAt: createdAt,
     payload: data,
-  });
+  };
 
-  return _sendPayload(secretKey, webhook, body, "application/json");
+  let body: string;
+  if (template) {
+    body = applyTemplate(template, defaultPayload, contentType);
+  } else {
+    body = JSON.stringify(defaultPayload);
+  }
+
+  return _sendPayload(secretKey, webhook, body, contentType);
 };
 
 export const createWebhookSignature = (params: { secret?: string | null; body: string }) =>
@@ -216,7 +305,7 @@ export const createWebhookSignature = (params: { secret?: string | null; body: s
 
 const _sendPayload = async (
   secretKey: string | null,
-  webhook: Pick<Webhook, "subscriberUrl" | "appId" | "payloadTemplate">,
+  webhook: WebhookForPayload,
   body: string,
   contentType: "application/json" | "application/x-www-form-urlencoded"
 ) => {
@@ -235,16 +324,9 @@ const _sendPayload = async (
     body,
   });
 
-  const text = await response.text();
-
   return {
     ok: response.ok,
     status: response.status,
-    ...(text
-      ? {
-          message: text,
-        }
-      : {}),
   };
 };
 

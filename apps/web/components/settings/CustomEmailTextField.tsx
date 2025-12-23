@@ -1,19 +1,19 @@
-import type { FormValues } from "@pages/settings/my-account/profile";
 import { useState } from "react";
 import type { UseFormReturn } from "react-hook-form";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
+import { Badge } from "@calcom/ui/components/badge";
+import { Button } from "@calcom/ui/components/button";
 import {
-  Badge,
-  TextField,
   Dropdown,
   DropdownItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  Button,
-  InputError,
-} from "@calcom/ui";
+} from "@calcom/ui/components/dropdown";
+import { InputError, Input } from "@calcom/ui/components/form";
+
+import type { FormValues } from "~/settings/my-account/profile-view";
 
 type CustomEmailTextFieldProps = {
   formMethods: UseFormReturn<FormValues>;
@@ -44,14 +44,14 @@ const CustomEmailTextField = ({
   return (
     <>
       <div
-        className={`border-default mt-2 flex items-center rounded-md border ${
-          inputFocus ? "ring-brand-default border-neutral-300 ring-2" : ""
+        className={`mt-2 flex w-full items-center rounded-[10px] border transition-all ${
+          inputFocus
+            ? "border-emphasis shadow-outline-gray-focused"
+            : "border-default hover:border-emphasis shadow-outline-gray-rested"
         }`}>
-        <TextField
+        <Input
           {...formMethods.register(formMethodFieldName)}
-          label=""
-          containerClassName="flex flex-1 items-center"
-          className="mb-0 border-none outline-none focus:ring-0"
+          className="ring-0 focus:ring-0 focus:shadow-none! flex-1 border-none bg-transparent px-3 py-1.5 text-sm outline-none"
           data-testid={dataTestId}
           onFocus={() => setInputFocus(true)}
           onBlur={() => setInputFocus(false)}
@@ -72,8 +72,8 @@ const CustomEmailTextField = ({
               <Button
                 StartIcon="ellipsis"
                 variant="icon"
-                size="sm"
-                color="secondary"
+                size="xs"
+                color="minimal"
                 className="ml-2 rounded-md"
                 data-testid="secondary-email-action-group-button"
               />
@@ -107,7 +107,7 @@ const CustomEmailTextField = ({
                 <DropdownItem
                   StartIcon="trash"
                   color="destructive"
-                  className="disabled:opacity-40"
+                  className="rounded-t-none disabled:opacity-40"
                   onClick={handleItemDelete}
                   disabled={emailPrimary}
                   data-testid="secondary-email-delete-button">

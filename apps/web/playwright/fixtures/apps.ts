@@ -1,6 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 
-import type { TApp } from "../apps/conferencing/conferencingApps.e2e";
+import type { TApp } from "../apps/conferencing/types";
 import {
   bookTimeSlot,
   gotoBookingPage,
@@ -18,6 +18,8 @@ export function createAppsFixture(page: Page) {
     installAnalyticsAppSkipConfigure: async (app: string) => {
       await page.getByTestId(`app-store-app-card-${app}`).click();
       await page.getByTestId("install-app-button").click();
+      await page.waitForURL(`apps/installation/accounts?slug=${app}`);
+      await page.reload();
       await page.click('[data-testid="install-app-button-personal"]');
       await page.waitForURL(`apps/installation/event-types?slug=${app}`);
       await page.click('[data-testid="set-up-later"]');
@@ -25,10 +27,14 @@ export function createAppsFixture(page: Page) {
     installAnalyticsApp: async (app: string, eventTypeIds: number[]) => {
       await page.getByTestId(`app-store-app-card-${app}`).click();
       (await page.waitForSelector('[data-testid="install-app-button"]')).click();
+      await page.waitForURL(`apps/installation/accounts?slug=${app}`);
+      await page.reload();
 
       await page.click('[data-testid="install-app-button-personal"]');
       await page.waitForURL(`apps/installation/event-types?slug=${app}`);
 
+      // eslint-disable-next-line playwright/no-wait-for-timeout
+      await page.waitForTimeout(1000);
       for (const id of eventTypeIds) {
         await page.click(`[data-testid="select-event-type-${id}"]`);
       }
@@ -47,7 +53,7 @@ export function createAppsFixture(page: Page) {
     },
 
     installConferencingAppSkipConfigure: async (app: string) => {
-      await page.getByTestId(`app-store-app-card-${app}`).click();
+      await page.goto(`apps/${app}`);
       await page.getByTestId("install-app-button").click();
       await page.waitForURL(`apps/installation/event-types?slug=${app}`);
       await page.click('[data-testid="set-up-later"]');
@@ -62,22 +68,21 @@ export function createAppsFixture(page: Page) {
       }
       await page.locator("[data-testid=display-location]").last().check();
       await saveEventType(page);
-      await page.waitForLoadState("networkidle");
       await gotoBookingPage(page);
       await selectFirstAvailableTimeSlotNextMonth(page);
       await bookTimeSlot(page);
-      await page.waitForLoadState("networkidle");
 
       await expect(page.locator("[data-testid=success-page]")).toBeVisible();
       await expect(page.locator("[data-testid=where] ")).toContainText(app.label);
     },
 
     installConferencingAppNewFlow: async (app: TApp, eventTypeIds: number[]) => {
-      await page.goto("apps/categories/conferencing");
-      await page.getByTestId(`app-store-app-card-${app.slug}`).click();
+      await page.goto(`apps/${app.slug}`);
       await page.getByTestId("install-app-button").click();
       await page.waitForURL(`apps/installation/event-types?slug=${app.slug}`);
 
+      // eslint-disable-next-line playwright/no-wait-for-timeout
+      await page.waitForTimeout(1000);
       for (const id of eventTypeIds) {
         await page.click(`[data-testid="select-event-type-${id}"]`);
       }
@@ -94,11 +99,9 @@ export function createAppsFixture(page: Page) {
     verifyConferencingAppNew: async (app: TApp, eventTypeIds: number[]) => {
       for (const id of eventTypeIds) {
         await page.goto(`/event-types/${id}`);
-        await page.waitForLoadState("networkidle");
         await gotoBookingPage(page);
         await selectFirstAvailableTimeSlotNextMonth(page);
         await bookTimeSlot(page, { name: `Test Testson`, email: `test@example.com` });
-        await page.waitForLoadState("networkidle");
         await expect(page.locator("[data-testid=success-page]")).toBeVisible();
         await expect(page.locator("[data-testid=where] ")).toContainText(app.label);
       }
@@ -108,9 +111,13 @@ export function createAppsFixture(page: Page) {
     },
     goToEventType: async (eventType: string) => {
       await page.getByRole("link", { name: eventType }).click();
+      // fix the race condition
+      await page.waitForSelector('[data-testid="event-title"]');
+      await expect(page.getByTestId("vertical-tab-basics")).toHaveAttribute("aria-current", "page");
     },
     goToAppsTab: async () => {
       await page.getByTestId("vertical-tab-apps").click();
+      await expect(page.getByTestId("vertical-tab-apps")).toHaveAttribute("aria-current", "page");
     },
     activeApp: async (app: string) => {
       await page.locator(`[data-testid='${app}-app-switch']`).click();
@@ -120,7 +127,7 @@ export function createAppsFixture(page: Page) {
     },
     verifyAppsInfoNew: async (app: string, eventTypeId: number) => {
       await page.goto(`event-types/${eventTypeId}?tabName=apps`);
-      await page.waitForLoadState("domcontentloaded");
+      await expect(page.getByTestId("vertical-tab-apps")).toHaveAttribute("aria-current", "page"); // fix the race condition
       await expect(page.locator(`[data-testid='${app}-app-switch'][data-state="checked"]`)).toBeVisible();
     },
   };

@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ArrayPath,
   Control,
@@ -10,27 +10,23 @@ import type {
   UseFieldArrayRemove,
 } from "react-hook-form";
 import { Controller, useFieldArray, useFormContext } from "react-hook-form";
-import type { GroupBase, Props } from "react-select";
+import { createFilter, type GroupBase, type Props } from "react-select";
 
-import type { AvailabilityFormValues } from "@calcom/atoms/availability/types";
+import type { scheduleClassNames } from "@calcom/atoms/availability/types";
 import type { ConfigType } from "@calcom/dayjs";
 import dayjs from "@calcom/dayjs";
 import { defaultDayRange as DEFAULT_DAY_RANGE } from "@calcom/lib/availability";
-import classNames from "@calcom/lib/classNames";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { weekdayNames } from "@calcom/lib/weekday";
 import useMeQuery from "@calcom/trpc/react/hooks/useMeQuery";
 import type { TimeRange } from "@calcom/types/schedule";
-import {
-  Button,
-  CheckboxField,
-  Dropdown,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-  Select,
-  SkeletonText,
-  Switch,
-} from "@calcom/ui";
+import cn from "@calcom/ui/classNames";
+import { Button } from "@calcom/ui/components/button";
+import { Dropdown, DropdownMenuContent, DropdownMenuTrigger } from "@calcom/ui/components/dropdown";
+import { Select } from "@calcom/ui/components/form";
+import { CheckboxField } from "@calcom/ui/components/form";
+import { Switch } from "@calcom/ui/components/form";
+import { SkeletonText } from "@calcom/ui/components/skeleton";
 
 export type { TimeRange };
 
@@ -38,6 +34,14 @@ export type ScheduleLabelsType = {
   addTime: string;
   copyTime: string;
   deleteTime: string;
+};
+
+export type SelectInnerClassNames = {
+  control?: string;
+  singleValue?: string;
+  valueContainer?: string;
+  input?: string;
+  menu?: string;
 };
 
 export type FieldPathByValue<TFieldValues extends FieldValues, TValue> = {
@@ -48,44 +52,36 @@ export const ScheduleDay = <TFieldValues extends FieldValues>({
   name,
   weekday,
   control,
-  handleSubmit,
   CopyButton,
   disabled,
   labels,
   userTimeFormat,
-  className,
+  classNames,
 }: {
   name: ArrayPath<TFieldValues>;
   weekday: string;
   control: Control<TFieldValues>;
-  handleSubmit?: (data: AvailabilityFormValues) => Promise<void>;
   CopyButton: JSX.Element;
   disabled?: boolean;
   labels?: ScheduleLabelsType;
   userTimeFormat: number | null;
-  className?: {
-    scheduleDay?: string;
-    dayRanges?: string;
-    timeRangeField?: string;
-    labelAndSwitchContainer?: string;
-    scheduleContainer?: string;
-  };
+  classNames?: scheduleClassNames;
 }) => {
-  const { watch, setValue, getValues } = useFormContext();
+  const { watch, setValue } = useFormContext();
   const watchDayRange = watch(name);
 
   return (
     <div
-      className={classNames(
+      className={cn(
         "flex w-full flex-col gap-4 last:mb-0 sm:flex-row sm:gap-6 sm:px-0",
-        className?.scheduleDay
+        classNames?.scheduleDay
       )}
       data-testid={weekday}>
       {/* Label & switch container */}
       <div
-        className={classNames(
+        className={cn(
           "flex h-[36px] items-center justify-between sm:w-32",
-          className?.labelAndSwitchContainer
+          classNames?.labelAndSwitchContainer
         )}>
         <div>
           <label className="text-default flex flex-row items-center space-x-2 rtl:space-x-reverse">
@@ -97,7 +93,6 @@ export const ScheduleDay = <TFieldValues extends FieldValues>({
                 data-testid={`${weekday}-switch`}
                 onCheckedChange={(isChecked) => {
                   setValue(name, (isChecked ? [DEFAULT_DAY_RANGE] : []) as TFieldValues[typeof name]);
-                  handleSubmit && handleSubmit(getValues() as AvailabilityFormValues);
                 }}
               />
             </div>
@@ -115,10 +110,10 @@ export const ScheduleDay = <TFieldValues extends FieldValues>({
               control={control}
               name={name}
               disabled={disabled}
-              handleSubmit={handleSubmit}
-              className={{
-                dayRanges: className?.dayRanges,
-                timeRangeField: className?.timeRangeField,
+              classNames={{
+                dayRanges: classNames?.dayRanges,
+                timeRangeField: classNames?.timeRangeField,
+                timePicker: classNames?.timePicker,
               }}
             />
             {!disabled && <div className="block">{CopyButton}</div>}
@@ -133,12 +128,10 @@ const CopyButton = ({
   getValuesFromDayRange,
   weekStart,
   labels,
-  handleSubmit,
 }: {
   getValuesFromDayRange: string;
   weekStart: number;
   labels?: ScheduleLabelsType;
-  handleSubmit?: (data: AvailabilityFormValues) => Promise<void>;
 }) => {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
@@ -148,7 +141,7 @@ const CopyButton = ({
     <Dropdown open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button
-          className={classNames(
+          className={cn(
             "text-default",
             open && "ring-brand-500 !bg-subtle outline-none ring-2 ring-offset-1"
           )}
@@ -167,7 +160,6 @@ const CopyButton = ({
           onClick={(selected) => {
             selected.forEach((day) => setValue(`${fieldArrayName}.${day}`, getValues(getValuesFromDayRange)));
             setOpen(false);
-            handleSubmit && handleSubmit(getValues() as AvailabilityFormValues);
           }}
           onCancel={() => setOpen(false)}
         />
@@ -184,7 +176,6 @@ const Schedule = <
   control: Control<TFieldValues>;
   weekStart?: number;
   disabled?: boolean;
-  handleSubmit?: (data: AvailabilityFormValues) => Promise<void>;
   labels?: ScheduleLabelsType;
   userTimeFormat?: number | null;
 }) => {
@@ -200,44 +191,31 @@ export const ScheduleComponent = <
 >({
   name,
   control,
-  handleSubmit,
   disabled,
   weekStart = 0,
   labels,
   userTimeFormat,
-  className,
+  classNames,
 }: {
   name: TPath;
   control: Control<TFieldValues>;
-  handleSubmit?: (data: AvailabilityFormValues) => Promise<void>;
   weekStart?: number;
   disabled?: boolean;
   labels?: ScheduleLabelsType;
   userTimeFormat: number | null;
-  className?: {
-    schedule?: string;
-    scheduleDay?: string;
-    dayRanges?: string;
-    timeRanges?: string;
-    labelAndSwitchContainer?: string;
-  };
+  classNames?: Omit<scheduleClassNames, "scheduleContainer">;
 }) => {
   const { i18n } = useLocale();
 
   return (
-    <div className={classNames("flex flex-col gap-4 p-2 sm:p-4", className?.schedule)}>
+    <div className={cn("flex flex-col gap-4 p-2 sm:p-4", classNames?.schedule)}>
       {/* First iterate for each day */}
       {weekdayNames(i18n.language, weekStart, "long").map((weekday, num) => {
         const weekdayIndex = (num + weekStart) % 7;
         const dayRangeName = `${name}.${weekdayIndex}` as ArrayPath<TFieldValues>;
         return (
           <ScheduleDay
-            className={{
-              scheduleDay: className?.scheduleDay,
-              dayRanges: className?.dayRanges,
-              timeRangeField: className?.timeRanges,
-              labelAndSwitchContainer: className?.labelAndSwitchContainer,
-            }}
+            classNames={classNames}
             userTimeFormat={userTimeFormat}
             labels={labels}
             disabled={disabled}
@@ -245,14 +223,8 @@ export const ScheduleComponent = <
             key={weekday}
             weekday={weekday}
             control={control}
-            handleSubmit={handleSubmit}
             CopyButton={
-              <CopyButton
-                weekStart={weekStart}
-                labels={labels}
-                getValuesFromDayRange={dayRangeName}
-                handleSubmit={handleSubmit}
-              />
+              <CopyButton weekStart={weekStart} labels={labels} getValuesFromDayRange={dayRangeName} />
             }
           />
         );
@@ -267,19 +239,14 @@ export const DayRanges = <TFieldValues extends FieldValues>({
   control,
   labels,
   userTimeFormat,
-  className,
-  handleSubmit,
+  classNames,
 }: {
   name: ArrayPath<TFieldValues>;
   control?: Control<TFieldValues>;
   disabled?: boolean;
   labels?: ScheduleLabelsType;
   userTimeFormat: number | null;
-  className?: {
-    dayRanges?: string;
-    timeRangeField?: string;
-  };
-  handleSubmit?: (data: AvailabilityFormValues) => Promise<void>;
+  classNames?: Pick<scheduleClassNames, "dayRanges" | "timeRangeField" | "timePicker">;
 }) => {
   const { t } = useLocale();
   const { getValues } = useFormContext();
@@ -292,7 +259,7 @@ export const DayRanges = <TFieldValues extends FieldValues>({
   if (!fields.length) return null;
 
   return (
-    <div className={classNames("flex flex-col gap-2", className?.dayRanges)}>
+    <div className={cn("flex flex-col gap-2", classNames?.dayRanges)}>
       {fields.map((field, index: number) => (
         <Fragment key={field.id}>
           <div className="flex gap-1 last:mb-0 sm:gap-2">
@@ -300,9 +267,9 @@ export const DayRanges = <TFieldValues extends FieldValues>({
               name={`${name}.${index}`}
               render={({ field }) => (
                 <TimeRangeField
-                  className={className?.timeRangeField}
+                  className={classNames?.timeRangeField}
                   userTimeFormat={userTimeFormat}
-                  handleSubmit={handleSubmit}
+                  timePickerClassNames={classNames?.timePicker}
                   {...field}
                 />
               )}
@@ -326,23 +293,16 @@ export const DayRanges = <TFieldValues extends FieldValues>({
 
                   if (slotRange?.append) {
                     append(slotRange.append);
-                    handleSubmit && handleSubmit(getValues() as AvailabilityFormValues);
                   }
 
                   if (slotRange?.prepend) {
                     prepend(slotRange.prepend);
-                    handleSubmit && handleSubmit(getValues() as AvailabilityFormValues);
                   }
                 }}
               />
             )}
             {index !== 0 && (
-              <RemoveTimeButton
-                index={index}
-                remove={remove}
-                handleSubmit={handleSubmit}
-                className="text-default mx-2 border-none"
-              />
+              <RemoveTimeButton index={index} remove={remove} className="text-default border-none" />
             )}
           </div>
         </Fragment>
@@ -357,17 +317,14 @@ const RemoveTimeButton = ({
   disabled,
   className,
   labels,
-  handleSubmit,
 }: {
   index: number | number[];
   remove: UseFieldArrayRemove;
   className?: string;
   disabled?: boolean;
   labels?: ScheduleLabelsType;
-  handleSubmit?: (data: AvailabilityFormValues) => Promise<void>;
 }) => {
   const { t } = useLocale();
-  const { getValues } = useFormContext();
   return (
     <Button
       disabled={disabled}
@@ -375,10 +332,7 @@ const RemoveTimeButton = ({
       variant="icon"
       color="destructive"
       StartIcon="trash"
-      onClick={() => {
-        remove(index);
-        handleSubmit && handleSubmit(getValues() as AvailabilityFormValues);
-      }}
+      onClick={() => remove(index)}
       className={className}
       tooltip={labels?.deleteTime ?? t("delete")}
     />
@@ -391,23 +345,37 @@ const TimeRangeField = ({
   onChange,
   disabled,
   userTimeFormat,
-  handleSubmit,
+  timePickerClassNames,
 }: {
   className?: string;
   disabled?: boolean;
   userTimeFormat: number | null;
-  handleSubmit?: (data: AvailabilityFormValues) => Promise<void>;
+  timePickerClassNames?: {
+    container?: string;
+    value?: string;
+    valueContainer?: string;
+    input?: string;
+    dropdown?: string;
+  };
 } & ControllerRenderProps) => {
-  const { getValues } = useFormContext();
+  const innerClassNames: SelectInnerClassNames = {
+    control: timePickerClassNames?.container,
+    singleValue: timePickerClassNames?.value,
+    valueContainer: timePickerClassNames?.valueContainer,
+    input: timePickerClassNames?.input,
+    menu: timePickerClassNames?.dropdown,
+  };
+
   // this is a controlled component anyway given it uses LazySelect, so keep it RHF agnostic.
   return (
-    <div className={classNames("flex flex-row gap-2 sm:gap-3", className)}>
+    <div className={cn("flex flex-row gap-2 sm:gap-3", className)}>
       <LazySelect
         userTimeFormat={userTimeFormat}
         className="block w-[90px] sm:w-[100px]"
         isDisabled={disabled}
         value={value.start}
         menuPlacement="bottom"
+        innerClassNames={innerClassNames}
         onChange={(option) => {
           const newStart = new Date(option?.value as number);
           if (newStart >= new Date(value.end)) {
@@ -417,7 +385,6 @@ const TimeRangeField = ({
           } else {
             onChange({ ...value, start: newStart });
           }
-          handleSubmit && handleSubmit(getValues() as AvailabilityFormValues);
         }}
       />
       <span className="text-default w-2 self-center"> - </span>
@@ -427,10 +394,10 @@ const TimeRangeField = ({
         isDisabled={disabled}
         value={value.end}
         min={value.start}
+        innerClassNames={innerClassNames}
         menuPlacement="bottom"
         onChange={(option) => {
           onChange({ ...value, end: new Date(option?.value as number) });
-          handleSubmit && handleSubmit(getValues() as AvailabilityFormValues);
         }}
       />
     </div>
@@ -449,6 +416,7 @@ const LazySelect = ({
   min?: ConfigType;
   max?: ConfigType;
   userTimeFormat: number | null;
+  innerClassNames?: SelectInnerClassNames;
 }) => {
   // Lazy-loaded options, otherwise adding a field has a noticeable redraw delay.
   const { options, filter } = useOptions(userTimeFormat);
@@ -457,9 +425,36 @@ const LazySelect = ({
     filter({ current: value });
   }, [filter, value]);
 
+  const [inputValue, setInputValue] = React.useState("");
+  const defaultFilter = React.useMemo(() => createFilter(), []);
+  const filteredOptions = React.useMemo(() => {
+    const regex = /^(\d{1,2})(a|p|am|pm)$/i;
+    const match = inputValue.replaceAll(" ", "").match(regex);
+    if (!match) {
+      return options.filter((option) =>
+        defaultFilter({ ...option, data: option.label, value: option.label }, inputValue)
+      );
+    }
+
+    const [, numberPart, periodPart] = match;
+    const periodLower = periodPart.toLowerCase();
+    const scoredOptions = options
+      .filter((option) => option.label && option.label.toLowerCase().includes(periodLower))
+      .map((option) => {
+        const labelLower = option.label.toLowerCase();
+        const index = labelLower.indexOf(numberPart);
+        const score = index >= 0 ? index + labelLower.length : Infinity;
+        return { score, option };
+      })
+      .sort((a, b) => a.score - b.score);
+
+    const maxScore = scoredOptions[0]?.score;
+    return scoredOptions.filter((item) => item.score === maxScore).map((item) => item.option);
+  }, [inputValue, options, defaultFilter]);
+
   return (
     <Select
-      options={options}
+      options={filteredOptions}
       onMenuOpen={() => {
         if (min) filter({ offset: min });
         if (max) filter({ limit: max });
@@ -469,6 +464,8 @@ const LazySelect = ({
       value={options.find((option) => option.value === dayjs(value).toDate().valueOf())}
       onMenuClose={() => filter({ current: value })}
       components={{ DropdownIndicator: () => null, IndicatorSeparator: () => null }}
+      onInputChange={setInputValue}
+      filterOption={() => true}
       {...props}
     />
   );
@@ -612,65 +609,60 @@ const CopyTimes = ({
   };
 
   return (
-    <div className="space-y-2 py-2">
+    <div className="stack-y-2 py-2">
       <div className="p-2">
         <p className="h6 text-emphasis pb-3 pl-1 text-xs font-medium uppercase">{t("copy_times_to")}</p>
-        <ol className="space-y-2">
+        <ol className="stack-y-2">
           <li key="select all">
-            <label className="text-default flex w-full items-center justify-between">
-              <span className="px-1">{t("select_all")}</span>
-              <CheckboxField
-                description=""
-                value={t("select_all")}
-                checked={selected.length === 7}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setSelected([0, 1, 2, 3, 4, 5, 6]);
-                  } else if (!e.target.checked) {
-                    setSelected([]);
-                  }
-                }}
-                ref={(ref) => {
-                  if (ref) {
-                    itteratablesByKeyRef.current.push(ref as HTMLInputElement);
-                  }
-                }}
-              />
-            </label>
+            <CheckboxField
+              description={t("select_all")}
+              descriptionAsLabel
+              value={t("select_all")}
+              checked={selected.length === 7}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  setSelected([0, 1, 2, 3, 4, 5, 6]);
+                } else if (!e.target.checked) {
+                  setSelected([]);
+                }
+              }}
+              ref={(ref) => {
+                if (ref) {
+                  itteratablesByKeyRef.current.push(ref as HTMLInputElement);
+                }
+              }}
+            />
           </li>
           {weekdayNames(i18n.language, weekStart).map((weekday, num) => {
             const weekdayIndex = (num + weekStart) % 7;
             return (
               <li key={weekday}>
-                <label className="text-default flex w-full items-center justify-between">
-                  <span className="px-1">{weekday}</span>
-                  <CheckboxField
-                    description=""
-                    value={weekdayIndex}
-                    checked={selected.includes(weekdayIndex) || disabled === weekdayIndex}
-                    disabled={disabled === weekdayIndex}
-                    onChange={(e) => {
-                      if (e.target.checked && !selected.includes(weekdayIndex)) {
-                        setSelected(selected.concat([weekdayIndex]));
-                      } else if (!e.target.checked && selected.includes(weekdayIndex)) {
-                        setSelected(selected.filter((item) => item !== weekdayIndex));
-                      }
-                    }}
-                    ref={(ref) => {
-                      if (ref && disabled !== weekdayIndex) {
-                        //we don't need to iterate over disabled elements
-                        itteratablesByKeyRef.current.push(ref as HTMLInputElement);
-                      }
-                    }}
-                  />
-                </label>
+                <CheckboxField
+                  description={weekday}
+                  descriptionAsLabel
+                  value={weekdayIndex}
+                  checked={selected.includes(weekdayIndex) || disabled === weekdayIndex}
+                  disabled={disabled === weekdayIndex}
+                  onChange={(e) => {
+                    if (e.target.checked && !selected.includes(weekdayIndex)) {
+                      setSelected(selected.concat([weekdayIndex]));
+                    } else if (!e.target.checked && selected.includes(weekdayIndex)) {
+                      setSelected(selected.filter((item) => item !== weekdayIndex));
+                    }
+                  }}
+                  ref={(ref) => {
+                    if (ref && disabled !== weekdayIndex) {
+                      itteratablesByKeyRef.current.push(ref as HTMLInputElement);
+                    }
+                  }}
+                />
               </li>
             );
           })}
         </ol>
       </div>
       <hr className="border-subtle" />
-      <div className="space-x-2 px-2 rtl:space-x-reverse">
+      <div className="flex justify-end space-x-2 px-2 rtl:space-x-reverse">
         <Button
           color="minimal"
           onClick={() => onCancel()}

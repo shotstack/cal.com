@@ -1,41 +1,23 @@
 "use client";
 
-import { Trans } from "next-i18next";
 import { useState } from "react";
 
-import NoSSR from "@calcom/core/components/NoSSR";
-import LicenseRequired from "@calcom/ee/common/components/LicenseRequired";
+import { Dialog } from "@calcom/features/components/controlled-dialog";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import {
-  Badge,
-  ConfirmationDialogContent,
-  Dialog,
-  DropdownActions,
-  Meta,
-  showToast,
-  Table,
-} from "@calcom/ui";
+import { Badge } from "@calcom/ui/components/badge";
+import { ConfirmationDialogContent } from "@calcom/ui/components/dialog";
+import { DropdownActions, Table } from "@calcom/ui/components/table";
+import { showToast } from "@calcom/ui/components/toast";
 
-import { getLayout } from "../../../../../settings/layouts/SettingsLayout";
 import { subdomainSuffix } from "../../../../organizations/lib/orgDomains";
 
 const { Body, Cell, ColumnTitle, Header, Row } = Table;
 
-function AdminOrgTable() {
+export function AdminOrgTable() {
   const { t } = useLocale();
   const utils = trpc.useUtils();
   const [data] = trpc.viewer.organizations.adminGetAll.useSuspenseQuery();
-  const verifyMutation = trpc.viewer.organizations.adminVerify.useMutation({
-    onSuccess: async (_data, variables) => {
-      showToast(t("org_has_been_processed"), "success");
-      await invalidateQueries(utils, variables);
-    },
-    onError: (err) => {
-      console.error(err.message);
-      showToast(t("org_error_processing"), "error");
-    },
-  });
   const updateMutation = trpc.viewer.organizations.adminUpdate.useMutation({
     onSuccess: async (_data, variables) => {
       showToast(t("org_has_been_processed"), "success");
@@ -61,7 +43,7 @@ function AdminOrgTable() {
 
   const publishOrg = async (org: (typeof data)[number]) => {
     if (!org.metadata?.requestedSlug) {
-      showToast(t("org_publish_error"), "error");
+      showToast(t("could_not_find_slug_to_publish_org"), "error");
       console.error("metadata.requestedSlug isn't set", org.metadata?.requestedSlug);
       return;
     }
@@ -240,21 +222,7 @@ function AdminOrgTable() {
   );
 }
 
-const AdminOrgList = () => {
-  const { t } = useLocale();
-  return (
-    <LicenseRequired>
-      <Meta title={t("organizations")} description={t("orgs_page_description")} />
-      <NoSSR>
-        <AdminOrgTable />
-      </NoSSR>
-    </LicenseRequired>
-  );
-};
-
-AdminOrgList.getLayout = getLayout;
-
-export default AdminOrgList;
+export default AdminOrgTable;
 
 const DeleteOrgDialog = ({
   org,
@@ -283,20 +251,12 @@ const DeleteOrgDialog = ({
         cancelBtnText={t("cancel")}
         variety="danger"
         onConfirm={onConfirm}>
-        <Trans
-          i18nKey="admin_delete_organization_description"
-          components={{ li: <li />, ul: <ul className="ml-4 mt-5 list-disc space-y-2" /> }}>
-          <ul>
-            <li>
-              Teams that are member of this organization will also be deleted along with their event-types
-            </li>
-            <li>
-              Users that were part of the organization will not be deleted and their event-types will also
-              remain intact.
-            </li>
-            <li>Usernames would be changed to allow them to exist outside the organization</li>
-          </ul>
-        </Trans>
+        <ul className="ml-4 mt-5 list-disc stack-y-2">
+          <li>{t("admin_delete_organization_description_1")}</li>
+          <li>{t("admin_delete_organization_description_2")}</li>
+          <li>{t("admin_delete_organization_description_3")}</li>
+          <li>{t("admin_delete_organization_description_4")}</li>
+        </ul>
       </ConfirmationDialogContent>
     </Dialog>
   );

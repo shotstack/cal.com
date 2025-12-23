@@ -1,7 +1,11 @@
 import { z } from "zod";
 
-export const ZSamlTenantProductInputSchema = z.object({
-  email: z.string().email(),
-});
+import { emailSchema } from "@calcom/lib/emailSchema";
 
-export type TSamlTenantProductInputSchema = z.infer<typeof ZSamlTenantProductInputSchema>;
+export type TSamlTenantProductInputSchema = {
+  email: string;
+};
+
+export const ZSamlTenantProductInputSchema: z.ZodType<TSamlTenantProductInputSchema> = z.object({
+  email: emailSchema,
+});

@@ -1,5 +1,5 @@
-import { getEnv } from "@/env";
 import { API_VERSIONS_VALUES } from "@/lib/api-versions";
+import { isOriginAllowed } from "@/lib/is-origin-allowed/is-origin-allowed";
 import { GetUser } from "@/modules/auth/decorators/get-user/get-user.decorator";
 import { ApiAuthGuard } from "@/modules/auth/guards/api-auth/api-auth.guard";
 import { NextAuthGuard } from "@/modules/auth/guards/next-auth/next-auth.guard";
@@ -24,21 +24,21 @@ import {
 } from "@nestjs/common";
 import {
   ApiTags as DocsTags,
-  ApiExcludeController as DocsExcludeController,
-  ApiOperation as DocsOperation,
-  ApiOkResponse as DocsOkResponse,
-  ApiBadRequestResponse as DocsBadRequestResponse,
+  ApiExcludeEndpoint as DocsExcludeEndpoint,
+  ApiHeader as DocsHeader,
+  ApiOperation,
 } from "@nestjs/swagger";
 import { Response as ExpressResponse } from "express";
 
 import { SUCCESS_STATUS, X_CAL_SECRET_KEY } from "@calcom/platform-constants";
 
+export const TOKENS_DOCS = `Access token is valid for 60 minutes and refresh token for 1 year. Make sure to store them in your database, for example, in your User database model \`calAccessToken\` and \`calRefreshToken\` fields.
+Response also contains \`accessTokenExpiresAt\` and \`refreshTokenExpiresAt\` fields, but if you decode the jwt token the payload will contain \`clientId\` (OAuth client ID), \`ownerId\` (user to whom token belongs ID), \`iat\` (issued at time) and \`expiresAt\` (when does the token expire) fields.`;
+
 @Controller({
   path: "/v2/oauth/:clientId",
   version: API_VERSIONS_VALUES,
 })
-@DocsExcludeController(getEnv("NODE_ENV") === "production")
-@DocsTags("OAuth - development only")
 export class OAuthFlowController {
   constructor(
     private readonly oauthClientRepository: OAuthClientRepository,
@@ -49,19 +49,7 @@ export class OAuthFlowController {
   @Post("/authorize")
   @HttpCode(HttpStatus.OK)
   @UseGuards(NextAuthGuard)
-  @DocsOperation({
-    summary: "Authorize an OAuth client",
-    description:
-      "Redirects the user to the specified 'redirect_uri' with an authorization code in query parameter if the client is authorized successfully. The code is then exchanged for access and refresh tokens via the `/exchange` endpoint.",
-  })
-  @DocsOkResponse({
-    description:
-      "The user is redirected to the 'redirect_uri' with an authorization code in query parameter e.g. `redirectUri?code=secretcode.`",
-  })
-  @DocsBadRequestResponse({
-    description:
-      "Bad request if the OAuth client is not found, if the redirect URI is invalid, or if the user has already authorized the client.",
-  })
+  @DocsExcludeEndpoint()
   async authorize(
     @Param("clientId") clientId: string,
     @Body() body: OAuthAuthorizeInput,
@@ -73,7 +61,7 @@ export class OAuthFlowController {
       throw new BadRequestException(`OAuth client with ID '${clientId}' not found`);
     }
 
-    if (!oauthClient?.redirectUris.includes(body.redirectUri)) {
+    if (!isOriginAllowed(body.redirectUri, oauthClient.redirectUris)) {
       throw new BadRequestException("Invalid 'redirect_uri' value.");
     }
 
@@ -95,19 +83,7 @@ export class OAuthFlowController {
 
   @Post("/exchange")
   @HttpCode(HttpStatus.OK)
-  @DocsOperation({
-    summary: "Exchange authorization code for access tokens",
-    description:
-      "Exchanges the authorization code received from the `/authorize` endpoint for access and refresh tokens. The authorization code should be provided in the 'Authorization' header prefixed with 'Bearer '.",
-  })
-  @DocsOkResponse({
-    type: KeysResponseDto,
-    description: "Successfully exchanged authorization code for access and refresh tokens.",
-  })
-  @DocsBadRequestResponse({
-    description:
-      "Bad request if the authorization code is missing, invalid, or if the client ID and secret do not match.",
-  })
+  @DocsExcludeEndpoint()
   async exchange(
     @Headers("Authorization") authorization: string,
     @Param("clientId") clientId: string,
@@ -118,44 +94,42 @@ export class OAuthFlowController {
       throw new BadRequestException("Missing 'Bearer' Authorization header.");
     }
 
-    const { accessToken, refreshToken, accessTokenExpiresAt } =
-      await this.oAuthFlowService.exchangeAuthorizationToken(
-        authorizeEndpointCode,
-        clientId,
-        body.clientSecret
-      );
+    const tokens = await this.oAuthFlowService.exchangeAuthorizationToken(
+      authorizeEndpointCode,
+      clientId,
+      body.clientSecret
+    );
 
     return {
       status: SUCCESS_STATUS,
-      data: {
-        accessToken,
-        accessTokenExpiresAt: accessTokenExpiresAt.valueOf(),
-        refreshToken,
-      },
+      data: tokens,
     };
   }
 
   @Post("/refresh")
   @HttpCode(HttpStatus.OK)
   @UseGuards(ApiAuthGuard)
-  async refreshAccessToken(
+  @DocsTags("Platform / Managed Users")
+  @DocsHeader({
+    name: X_CAL_SECRET_KEY,
+    description: "OAuth client secret key.",
+    required: true,
+  })
+  @ApiOperation({
+    summary: "Refresh managed user tokens",
+    description: `If managed user access token is expired then get a new one using this endpoint - it will also refresh the refresh token, because we use
+    "refresh token rotation" mechanism. ${TOKENS_DOCS}`,
+  })
+  async refreshTokens(
     @Param("clientId") clientId: string,
     @Headers(X_CAL_SECRET_KEY) secretKey: string,
     @Body() body: RefreshTokenInput
   ): Promise<KeysResponseDto> {
-    const { accessToken, refreshToken, accessTokenExpiresAt } = await this.oAuthFlowService.refreshToken(
-      clientId,
-      secretKey,
-      body.refreshToken
-    );
+    const tokens = await this.oAuthFlowService.refreshToken(clientId, secretKey, body.refreshToken);
 
     return {
       status: SUCCESS_STATUS,
-      data: {
-        accessToken: accessToken,
-        accessTokenExpiresAt: accessTokenExpiresAt.valueOf(),
-        refreshToken: refreshToken,
-      },
+      data: tokens,
     };
   }
 }

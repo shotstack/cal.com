@@ -1,5 +1,7 @@
 import { bootstrap } from "@/app";
 import { AppModule } from "@/app.module";
+import { CreateIcsFeedOutput, CreateIcsFeedOutputResponseDto } from "@/ee/calendars/input/create-ics.output";
+import { ConnectedCalendarsData } from "@/ee/calendars/outputs/connected-calendars.output";
 import { DeletedCalendarCredentialsOutputResponseDto } from "@/ee/calendars/outputs/delete-calendar-credentials.output";
 import { CalendarsService } from "@/ee/calendars/services/calendars.service";
 import { HttpExceptionFilter } from "@/filters/http-exception.filter";
@@ -10,7 +12,6 @@ import { UsersModule } from "@/modules/users/users.module";
 import { INestApplication } from "@nestjs/common";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import { Test } from "@nestjs/testing";
-import { PlatformOAuthClient, Team, User, Credential } from "@prisma/client";
 import * as request from "supertest";
 import { CredentialsRepositoryFixture } from "test/fixtures/repository/credentials.repository.fixture";
 import { OAuthClientRepositoryFixture } from "test/fixtures/repository/oauth-client.repository.fixture";
@@ -18,6 +19,8 @@ import { TeamRepositoryFixture } from "test/fixtures/repository/team.repository.
 import { TokensRepositoryFixture } from "test/fixtures/repository/tokens.repository.fixture";
 import { UserRepositoryFixture } from "test/fixtures/repository/users.repository.fixture";
 import { CalendarsServiceMock } from "test/mocks/calendars-service-mock";
+import { IcsCalendarServiceMock } from "test/mocks/ics-calendar-service-mock";
+import { randomString } from "test/utils/randomString";
 
 import { SUCCESS_STATUS } from "@calcom/platform-constants";
 import {
@@ -27,6 +30,9 @@ import {
   GOOGLE_CALENDAR_ID,
 } from "@calcom/platform-constants";
 import { OFFICE_365_CALENDAR_ID, OFFICE_365_CALENDAR_TYPE } from "@calcom/platform-constants";
+import { ICS_CALENDAR, ICS_CALENDAR_TYPE } from "@calcom/platform-constants/apps";
+import { IcsFeedCalendarService } from "@calcom/platform-libraries/app-store";
+import type { PlatformOAuthClient, Team, User, Credential } from "@calcom/prisma/client";
 
 const CLIENT_REDIRECT_URI = "http://localhost:5555";
 
@@ -45,6 +51,7 @@ describe("Platform Calendars Endpoints", () => {
   let googleCalendarCredentials: Credential;
   let accessTokenSecret: string;
   let refreshTokenSecret: string;
+  let icsCalendarCredentials: CreateIcsFeedOutput;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
@@ -66,9 +73,12 @@ describe("Platform Calendars Endpoints", () => {
     teamRepositoryFixture = new TeamRepositoryFixture(moduleRef);
     tokensRepositoryFixture = new TokensRepositoryFixture(moduleRef);
     credentialsRepositoryFixture = new CredentialsRepositoryFixture(moduleRef);
-    organization = await teamRepositoryFixture.create({ name: "organization" });
+    organization = await teamRepositoryFixture.create({ name: `calendars-organization-${randomString()}` });
     oAuthClient = await createOAuthClient(organization.id);
-    user = await userRepositoryFixture.createOAuthManagedUser("office365-connect@gmail.com", oAuthClient.id);
+    user = await userRepositoryFixture.createOAuthManagedUser(
+      `calendars-user-${randomString()}@api.com`,
+      oAuthClient.id
+    );
     const tokens = await tokensRepositoryFixture.createTokens(user.id, oAuthClient.id);
     accessTokenSecret = tokens.accessToken;
     refreshTokenSecret = tokens.refreshToken;
@@ -108,7 +118,7 @@ describe("Platform Calendars Endpoints", () => {
   });
 
   // TODO: Uncomment this once CI is ready to run proper Office365 tests
-  // it(`/GET/v2/calendars/${OFFICE_365_CALENDAR}/connect: it should redirect to auth-url for office 365 calendar oauth with valid access token `, async () => {
+  // it(`/GET/v2/calendars/${OFFICE_365_CALENDAR}/connect: it should redirect to auth-url for office 365 calendar OAuth with valid access token `, async () => {
   //   const response = await request(app.getHttpServer())
   //     .get(`/v2/calendars/${OFFICE_365_CALENDAR}/connect`)
   //     .set("Authorization", `Bearer ${accessTokenSecret}`)
@@ -118,9 +128,9 @@ describe("Platform Calendars Endpoints", () => {
   //   expect(data.authUrl).toBeDefined();
   // });
 
-  it(`/GET/v2/calendars/${GOOGLE_CALENDAR}/connect: it should redirect to auth-url for google calendar oauth with valid access token `, async () => {
+  it(`/GET/v2/calendars/${GOOGLE_CALENDAR}/connect: it should redirect to auth-url for google calendar OAuth with valid access token `, async () => {
     const response = await request(app.getHttpServer())
-      .get(`/v2/calendars/${GOOGLE_CALENDAR}/connect`)
+      .get(`/v2/calendars/${GOOGLE_CALENDAR}/connect?redir=https://cal.com&isDryRun=false`)
       .set("Authorization", `Bearer ${accessTokenSecret}`)
       .set("Origin", CLIENT_REDIRECT_URI)
       .expect(200);
@@ -192,6 +202,81 @@ describe("Platform Calendars Endpoints", () => {
       .expect(200);
   });
 
+  it(`/POST/v2/calendars/${ICS_CALENDAR}/save with access token should fail to create a new ics feed calendar credentials with invalid urls`, async () => {
+    const body = {
+      urls: ["https://cal.com/ics/feed.ics", "https://not-an-ics-feed.com"],
+      readOnly: false,
+    };
+    await request(app.getHttpServer())
+      .post(`/v2/calendars/${ICS_CALENDAR}/save`)
+      .set("Authorization", `Bearer ${accessTokenSecret}`)
+      .set("Origin", CLIENT_REDIRECT_URI)
+      .send(body)
+      .expect(400);
+  });
+
+  it(`/POST/v2/calendars/${ICS_CALENDAR}/save with access token should create a new ics feed calendar credentials`, async () => {
+    const body = {
+      urls: ["https://cal.com/ics/feed.ics"],
+      readOnly: false,
+    };
+    jest
+      .spyOn(IcsFeedCalendarService.prototype, "listCalendars")
+      .mockImplementation(IcsCalendarServiceMock.prototype.listCalendars);
+    await request(app.getHttpServer())
+      .post(`/v2/calendars/${ICS_CALENDAR}/save`)
+      .set("Authorization", `Bearer ${accessTokenSecret}`)
+      .set("Origin", CLIENT_REDIRECT_URI)
+      .send(body)
+      .expect(201)
+      .then(async (response) => {
+        const responseBody: CreateIcsFeedOutputResponseDto = response.body;
+        expect(responseBody.status).toEqual(SUCCESS_STATUS);
+        expect(responseBody.data).toBeDefined();
+        expect(responseBody.data.userId).toBeDefined();
+        expect(responseBody.data.userId).toEqual(user.id);
+        expect(responseBody.data.id).toBeDefined();
+        icsCalendarCredentials = responseBody.data;
+      });
+  });
+
+  it(`/GET/v2/calendars/${ICS_CALENDAR}/check with access token`, async () => {
+    await request(app.getHttpServer())
+      .get(`/v2/calendars/${ICS_CALENDAR}/check`)
+      .set("Authorization", `Bearer ${accessTokenSecret}`)
+      .set("Origin", CLIENT_REDIRECT_URI)
+      .expect(200);
+  });
+
+  it(`/GET/v2/calendars with access token`, async () => {
+    const response = await request(app.getHttpServer())
+      .get(`/v2/calendars`)
+      .set("Authorization", `Bearer ${accessTokenSecret}`)
+      .set("Origin", CLIENT_REDIRECT_URI)
+      .expect(200);
+
+    const data: ConnectedCalendarsData = response.body.data;
+    expect(data.connectedCalendars).toBeDefined();
+    expect(data.connectedCalendars).toHaveLength(3);
+
+    const googleConnectedCalendar = data.connectedCalendars.find(
+      (calendar) => calendar.integration.type === GOOGLE_CALENDAR_TYPE
+    );
+    const office365ConnectedCalendar = data.connectedCalendars.find(
+      (calendar) => calendar.integration.type === OFFICE_365_CALENDAR_TYPE
+    );
+    const icsConnectedCalendar = data.connectedCalendars.find(
+      (calendar) => calendar.integration.type === ICS_CALENDAR_TYPE
+    );
+
+    expect(googleConnectedCalendar).toBeDefined();
+    expect(office365ConnectedCalendar).toBeDefined();
+    expect(icsConnectedCalendar).toBeDefined();
+
+    expect(data.destinationCalendar).toBeDefined();
+    expect(data.destinationCalendar.integration).toEqual(GOOGLE_CALENDAR_TYPE);
+  });
+
   it.skip(`/POST/v2/calendars/${OFFICE_365_CALENDAR}/disconnect: it should respond with a 201 returning back the user deleted calendar credentials`, async () => {
     const body = {
       id: 10,
@@ -217,6 +302,7 @@ describe("Platform Calendars Endpoints", () => {
     await teamRepositoryFixture.delete(organization.id);
     await credentialsRepositoryFixture.delete(office365Credentials.id);
     await credentialsRepositoryFixture.delete(googleCalendarCredentials.id);
+    await credentialsRepositoryFixture.delete(icsCalendarCredentials.id);
     await userRepositoryFixture.deleteByEmail(user.email);
     await app.close();
   });

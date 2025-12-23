@@ -4,9 +4,11 @@
 **/
 import { appDataSchema as alby_zod_ts } from "./alby/zod";
 import { appDataSchema as basecamp3_zod_ts } from "./basecamp3/zod";
-import { appDataSchema as campsite_zod_ts } from "./campsite/zod";
+import { appDataSchema as btcpayserver_zod_ts } from "./btcpayserver/zod";
 import { appDataSchema as closecom_zod_ts } from "./closecom/zod";
 import { appDataSchema as dailyvideo_zod_ts } from "./dailyvideo/zod";
+import { appDataSchema as databuddy_zod_ts } from "./databuddy/zod";
+import { appDataSchema as dub_zod_ts } from "./dub/zod";
 import { appDataSchema as fathom_zod_ts } from "./fathom/zod";
 import { appDataSchema as feishucalendar_zod_ts } from "./feishucalendar/zod";
 import { appDataSchema as ga4_zod_ts } from "./ga4/zod";
@@ -14,7 +16,9 @@ import { appDataSchema as giphy_zod_ts } from "./giphy/zod";
 import { appDataSchema as googlecalendar_zod_ts } from "./googlecalendar/zod";
 import { appDataSchema as googlevideo_zod_ts } from "./googlevideo/zod";
 import { appDataSchema as gtm_zod_ts } from "./gtm/zod";
+import { appDataSchema as hitpay_zod_ts } from "./hitpay/zod";
 import { appDataSchema as hubspot_zod_ts } from "./hubspot/zod";
+import { appDataSchema as insihts_zod_ts } from "./insihts/zod";
 import { appDataSchema as intercom_zod_ts } from "./intercom/zod";
 import { appDataSchema as jelly_zod_ts } from "./jelly/zod";
 import { appDataSchema as jitsivideo_zod_ts } from "./jitsivideo/zod";
@@ -23,6 +27,7 @@ import { appDataSchema as make_zod_ts } from "./make/zod";
 import { appDataSchema as matomo_zod_ts } from "./matomo/zod";
 import { appDataSchema as metapixel_zod_ts } from "./metapixel/zod";
 import { appDataSchema as mock_payment_app_zod_ts } from "./mock-payment-app/zod";
+import { appDataSchema as nextcloudtalk_zod_ts } from "./nextcloudtalk/zod";
 import { appDataSchema as office365calendar_zod_ts } from "./office365calendar/zod";
 import { appDataSchema as office365video_zod_ts } from "./office365video/zod";
 import { appDataSchema as paypal_zod_ts } from "./paypal/zod";
@@ -51,9 +56,11 @@ import { appDataSchema as zoomvideo_zod_ts } from "./zoomvideo/zod";
 export const appDataSchemas = {
   alby: alby_zod_ts,
   basecamp3: basecamp3_zod_ts,
-  campsite: campsite_zod_ts,
+  btcpayserver: btcpayserver_zod_ts,
   closecom: closecom_zod_ts,
   dailyvideo: dailyvideo_zod_ts,
+  databuddy: databuddy_zod_ts,
+  dub: dub_zod_ts,
   fathom: fathom_zod_ts,
   feishucalendar: feishucalendar_zod_ts,
   ga4: ga4_zod_ts,
@@ -61,7 +68,9 @@ export const appDataSchemas = {
   googlecalendar: googlecalendar_zod_ts,
   googlevideo: googlevideo_zod_ts,
   gtm: gtm_zod_ts,
+  hitpay: hitpay_zod_ts,
   hubspot: hubspot_zod_ts,
+  insihts: insihts_zod_ts,
   intercom: intercom_zod_ts,
   jelly: jelly_zod_ts,
   jitsivideo: jitsivideo_zod_ts,
@@ -70,6 +79,7 @@ export const appDataSchemas = {
   matomo: matomo_zod_ts,
   metapixel: metapixel_zod_ts,
   "mock-payment-app": mock_payment_app_zod_ts,
+  nextcloudtalk: nextcloudtalk_zod_ts,
   office365calendar: office365calendar_zod_ts,
   office365video: office365video_zod_ts,
   paypal: paypal_zod_ts,

@@ -1,7 +1,6 @@
 import type { FC } from "react";
 import React from "react";
 
-import type { IconName } from "../..";
 import type { ButtonBaseProps } from "../button";
 import { Button } from "../button";
 import {
@@ -11,7 +10,8 @@ import {
   DropdownMenuItem,
   DropdownMenuPortal,
   DropdownMenuTrigger,
-} from "../form/dropdown";
+} from "../dropdown";
+import type { IconName } from "../icon";
 
 export type ActionType = {
   id: string;
@@ -20,7 +20,7 @@ export type ActionType = {
   label: string;
   disabled?: boolean;
   color?: ButtonBaseProps["color"];
-  bookingId?: number;
+  bookingUid?: string;
 } & (
   | { href: string; onClick?: never; actions?: never }
   | { href?: never; onClick: (e: React.MouseEvent<HTMLElement, MouseEvent>) => void; actions?: never }
@@ -61,7 +61,7 @@ export const DropdownActions = ({
                 data-testid={action.id}
                 StartIcon={action.icon}
                 href={action.href}
-                data-bookingid={action.bookingId}
+                data-booking-uid={action.bookingUid}
                 onClick={action.onClick || defaultAction}>
                 {action.label}
               </DropdownItem>
@@ -88,7 +88,7 @@ export const TableActions: FC<Props> = ({ actions }) => {
               StartIcon={action.icon}
               {...(action?.actions ? { EndIcon: "chevron-down" } : null)}
               disabled={action.disabled}
-              data-bookingid={action.bookingId}
+              data-booking-uid={action.bookingUid}
               color={action.color || "secondary"}>
               {action.label}
             </Button>

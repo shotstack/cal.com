@@ -1,9 +1,12 @@
-import type { SchedulingType } from "@prisma/client";
 import type { ErrorOption, FieldPath } from "react-hook-form";
 
-import type { BookingCreateBody } from "@calcom/prisma/zod-utils";
+import type { RegularBookingCreateResult } from "@calcom/features/bookings/lib/dto/types";
+import type { Slots } from "@calcom/features/calendars/lib/types";
+import type { SchedulingType } from "@calcom/prisma/enums";
 import type { RouterOutputs } from "@calcom/trpc/react";
 import type { AppsStatus } from "@calcom/types/Calendar";
+
+import type { BookingCreateBody } from "./lib/bookingCreateBodySchema";
 
 export type PublicEvent = NonNullable<RouterOutputs["viewer"]["public"]["event"]>;
 
@@ -15,7 +18,7 @@ export type BookerEventQuery = {
 };
 
 type BookerEventUser = Pick<
-  PublicEvent["users"][number],
+  PublicEvent["subsetOfUsers"][number],
   "name" | "username" | "avatarUrl" | "weekStart" | "profile"
 > & {
   metadata?: undefined;
@@ -25,6 +28,9 @@ type BookerEventUser = Pick<
 };
 
 type BookerEventProfile = Pick<PublicEvent["profile"], "name" | "image" | "bookerLayouts">;
+
+// Re-export Slots from the server-safe location
+export type { Slots };
 
 export type BookerEvent = Pick<
   PublicEvent,
@@ -41,17 +47,29 @@ export type BookerEvent = Pick<
   | "price"
   | "currency"
   | "lockTimeZoneToggleOnBookingPage"
+  | "lockedTimeZone"
   | "schedule"
   | "seatsPerTimeSlot"
   | "title"
   | "description"
   | "forwardParamsSuccessRedirect"
   | "successRedirectUrl"
-  | "hosts"
+  | "subsetOfHosts"
   | "bookingFields"
   | "seatsShowAvailabilityCount"
   | "isInstantEvent"
-> & { users: BookerEventUser[]; showInstantEventConnectNowModal: boolean } & { profile: BookerEventProfile };
+  | "instantMeetingParameters"
+  | "fieldTranslations"
+  | "autoTranslateDescriptionEnabled"
+  | "disableCancelling"
+  | "disableRescheduling"
+  | "interfaceLanguage"
+  | "team"
+  | "owner"
+> & {
+  subsetOfUsers: BookerEventUser[];
+  showInstantEventConnectNowModal: boolean;
+} & { profile: BookerEventProfile };
 
 export type ValidationErrors<T extends object> = { key: FieldPath<T>; error: ErrorOption }[];
 
@@ -62,7 +80,7 @@ export enum EventDetailBlocks {
   DURATION,
   LOCATION,
   REQUIRES_CONFIRMATION,
-  // Includes input to select # of occurences.
+  // Includes input to select # of occurrences.
   OCCURENCES,
   PRICE,
 }
@@ -78,13 +96,8 @@ export type RecurringBookingCreateBody = BookingCreateBody & {
   schedulingType?: SchedulingType;
 };
 
-export type BookingResponse = Awaited<
-  ReturnType<typeof import("@calcom/features/bookings/lib/handleNewBooking").default>
->;
-
-export type InstantBookingResponse = Awaited<
-  ReturnType<typeof import("@calcom/features/instant-meeting/handleInstantMeeting").default>
->;
+// TODO: Instead of using the two different names, we want to use RegularBookingCreateResult name only but the name BookingResponse is used at ton of places and would be fixed in a separate followup PR.
+export type BookingResponse = RegularBookingCreateResult;
 
 export type MarkNoShowResponse = Awaited<
   ReturnType<typeof import("@calcom/features/handleMarkNoShow").default>

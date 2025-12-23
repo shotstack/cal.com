@@ -1,15 +1,15 @@
 "use client";
 
-import { useRouter, useParams } from "next/navigation";
-import React from "react";
+import { useParams } from "next/navigation";
 import { useFormContext } from "react-hook-form";
 import { z } from "zod";
 
 import LicenseRequired from "@calcom/features/ee/common/components/LicenseRequired";
-import SettingsLayout from "@calcom/features/settings/layouts/SettingsLayout";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { trpc } from "@calcom/trpc/react";
-import { Meta, Button, useMeta, showToast } from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { showToast } from "@calcom/ui/components/toast";
+import { revalidateAttributesList } from "@calcom/web/app/(use-page-wrapper)/settings/organizations/(org-user-only)/members/actions";
 
 import { AttributeForm } from "./AttributesForm";
 
@@ -23,7 +23,6 @@ const CreateAttributeSchema = z.object({
 type FormValues = z.infer<typeof CreateAttributeSchema>;
 
 function CreateAttributesPage() {
-  const router = useRouter();
   const utils = trpc.useUtils();
   const { t } = useLocale();
   // Get the attribute id from the url
@@ -39,7 +38,7 @@ function CreateAttributesPage() {
         id,
       });
       utils.viewer.attributes.list.invalidate();
-      router.push("/settings/organizations/attributes");
+      revalidateAttributesList();
     },
     onError: (err) => {
       showToast(err.message, "error");
@@ -49,21 +48,22 @@ function CreateAttributesPage() {
   return (
     <>
       <LicenseRequired>
-        <Meta title="Attribute" description={t("edit_attribute_description")} />
         {!attribute.isLoading && attribute.data ? (
           <AttributeForm
             initialValues={{
               attrName: attribute.data.name,
               type: attribute.data.type,
               options: attribute.data.options,
+              isLocked: attribute.data.isLocked,
+              isWeightsEnabled: attribute.data.isWeightsEnabled,
             }}
             header={<EditAttributeHeader isPending={mutation.isPending} />}
             onSubmit={(values) => {
+              const { attrName, ...rest } = values;
               mutation.mutate({
+                ...rest,
+                name: attrName,
                 attributeId: id,
-                name: values.attrName,
-                type: values.type,
-                options: values.options,
               });
             }}
           />
@@ -76,7 +76,6 @@ function CreateAttributesPage() {
 }
 
 function EditAttributeHeader(props: { isPending: boolean }) {
-  const { meta } = useMeta();
   const { t } = useLocale();
   const formContext = useFormContext<FormValues>();
 
@@ -84,7 +83,7 @@ function EditAttributeHeader(props: { isPending: boolean }) {
 
   return (
     <>
-      <div className="mb-6 mt-6 flex flex-grow items-center justify-between lg:mt-12">
+      <div className="mb-6 mt-6 flex grow items-center justify-between lg:mt-12">
         <div className="-ml-12 flex items-center gap-4">
           <Button
             variant="icon"
@@ -94,7 +93,7 @@ function EditAttributeHeader(props: { isPending: boolean }) {
             <span className="sr-only">{t("back_to_attributes")}</span>
           </Button>
           <div className="font-cal text-cal flex space-x-1 text-xl font-semibold leading-none">
-            <h1 className="text-emphasis">{meta.title}</h1>
+            <h1 className="text-emphasis">{t("attribute")}</h1>
             {watchedTitle && (
               <>
                 <span className="text-subtle">/</span> <span className="text-emphasis">{watchedTitle}</span>
@@ -103,17 +102,11 @@ function EditAttributeHeader(props: { isPending: boolean }) {
           </div>
         </div>
         <Button type="submit" data-testid="create-attribute-button" loading={props.isPending}>
-          Save
+          {t("save")}
         </Button>
       </div>
     </>
   );
 }
-
-function getLayout(page: React.ReactElement) {
-  return <SettingsLayout hideHeader>{page}</SettingsLayout>;
-}
-
-CreateAttributesPage.getLayout = getLayout;
 
 export default CreateAttributesPage;

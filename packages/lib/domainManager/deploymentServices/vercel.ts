@@ -5,19 +5,22 @@ import { safeStringify } from "@calcom/lib/safeStringify";
 
 import logger from "../../logger";
 
+const log = logger.getSubLogger({ prefix: ["Vercel/DomainManager"] });
 const vercelApiForProjectUrl = `https://api.vercel.com/v9/projects/${process.env.PROJECT_ID_VERCEL}`;
 const vercelDomainApiResponseSchema = z.object({
   error: z
     .object({
       code: z.string().nullish(),
-      domain: z.string().nullish(),
+      domain: z.any().nullish(),
+      message: z.string().nullish(),
+      invalidToken: z.boolean().nullish(),
     })
     .optional(),
 });
 
 export const createDomain = async (domain: string) => {
   assertVercelEnvVars(process.env);
-  logger.info(`Creating domain in Vercel: ${domain}`);
+  log.info(`Creating domain in Vercel: ${domain}`);
   const response = await fetch(`${vercelApiForProjectUrl}/domains?teamId=${process.env.TEAM_ID_VERCEL}`, {
     body: JSON.stringify({ name: domain }),
     headers: {
@@ -27,17 +30,32 @@ export const createDomain = async (domain: string) => {
     method: "POST",
   });
 
-  const data = vercelDomainApiResponseSchema.parse(await response.json());
+  const responseJson = await response.json();
 
-  if (!data.error) {
+  const parsedResponse = vercelDomainApiResponseSchema.safeParse(responseJson);
+
+  if (!parsedResponse.success) {
+    // Looks like Vercel changed the response format, so sometimes zod parsing fails
+    log.error(
+      safeStringify({
+        errorMessage: "Failed to parse Vercel domain creation response",
+        zodError: parsedResponse.error,
+        response: responseJson,
+      })
+    );
+    // Let's consider domain creation failed
+    return false;
+  }
+
+  if (!parsedResponse.data.error) {
     return true;
   }
 
-  return handleDomainCreationError(data.error);
+  return handleDomainCreationError(parsedResponse.data.error);
 };
 
 export const deleteDomain = async (domain: string) => {
-  logger.info(`Deleting domain in Vercel: ${domain}`);
+  log.info(`Deleting domain in Vercel: ${domain}`);
   assertVercelEnvVars(process.env);
 
   const response = await fetch(
@@ -58,11 +76,17 @@ export const deleteDomain = async (domain: string) => {
   return handleDomainDeletionError(data.error);
 };
 
-function handleDomainCreationError(error: { code?: string | null; domain?: string | null }) {
-  // Domain is already owned by another team but you can request delegation to access it
+function handleDomainCreationError(error: {
+  code?: string | null;
+  domain?: string | null;
+  message?: string | null;
+  invalidToken?: boolean | null;
+}){
+  // Vercel returns "forbidden" for various permission issues, not just domain ownership
   if (error.code === "forbidden") {
-    const errorMessage = "Domain is already owned by another team";
-    logger.error(
+    const errorMessage =
+      "Vercel denied permission to manage this domain. Please verify your Vercel project, team, and domain permissions.";
+    log.error(
       safeStringify({
         errorMessage,
         vercelError: error,
@@ -76,7 +100,7 @@ function handleDomainCreationError(error: { code?: string | null; domain?: strin
 
   if (error.code === "domain_taken") {
     const errorMessage = "Domain is already being used by a different project";
-    logger.error(
+    log.error(
       safeStringify({
         errorMessage,
         vercelError: error,
@@ -94,23 +118,29 @@ function handleDomainCreationError(error: { code?: string | null; domain?: strin
   }
 
   const errorMessage = `Failed to create domain on Vercel: ${error.domain}`;
-  logger.error(safeStringify({ errorMessage, vercelError: error }));
+  log.error(safeStringify({ errorMessage, vercelError: error }));
   throw new HttpError({
     message: errorMessage,
     statusCode: 400,
   });
 }
 
-function handleDomainDeletionError(error: { code?: string | null; domain?: string | null }) {
+function handleDomainDeletionError(error: {
+  code?: string | null;
+  domain?: string | null;
+  message?: string | null;
+  invalidToken?: boolean | null;
+}){
   if (error.code === "not_found") {
     // Domain is already deleted
     return true;
   }
 
-  // Domain is already owned by another team but you can request delegation to access it
+  // Vercel returns "forbidden" for various permission issues, not just domain ownership
   if (error.code === "forbidden") {
-    const errorMessage = "Domain is owned by another team";
-    logger.error(
+    const errorMessage =
+      "Vercel denied permission to manage this domain. Please verify your Vercel project, team, and domain permissions.";
+    log.error(
       safeStringify({
         errorMessage,
         vercelError: error,
@@ -123,7 +153,7 @@ function handleDomainDeletionError(error: { code?: string | null; domain?: strin
   }
 
   const errorMessage = `Failed to take action for domain: ${error.domain}`;
-  logger.error(safeStringify({ errorMessage, vercelError: error }));
+  log.error(safeStringify({ errorMessage, vercelError: error }));
   throw new HttpError({
     message: errorMessage,
     statusCode: 400,

@@ -1,21 +1,20 @@
+import { Dialog } from "@calcom/features/components/controlled-dialog";
 import { getPlaceholderAvatar } from "@calcom/lib/defaultAvatarImage";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import type { RouterOutputs } from "@calcom/trpc/react";
+import { Avatar } from "@calcom/ui/components/avatar";
+import { Button } from "@calcom/ui/components/button";
+import { ButtonGroup } from "@calcom/ui/components/buttonGroup";
+import { DialogTrigger, ConfirmationDialogContent } from "@calcom/ui/components/dialog";
 import {
-  Avatar,
-  Button,
-  ButtonGroup,
-  ConfirmationDialogContent,
-  Dialog,
-  DialogTrigger,
   Dropdown,
   DropdownItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  showToast,
-  Tooltip,
-} from "@calcom/ui";
+} from "@calcom/ui/components/dropdown";
+import { showToast } from "@calcom/ui/components/toast";
+import { Tooltip } from "@calcom/ui/components/tooltip";
 
 import { useOrgBranding } from "../../../organizations/context/provider";
 
@@ -62,7 +61,7 @@ export default function OtherTeamListItem(props: Props) {
 
   return (
     <li>
-      <div className="hover:bg-muted group flex items-center justify-between transition">
+      <div className="hover:bg-cal-muted group flex items-center justify-between transition">
         {teamInfo}
         <div className="px-5 py-5">
           <div className="flex space-x-2 rtl:space-x-reverse">
@@ -89,7 +88,7 @@ export default function OtherTeamListItem(props: Props) {
               <Dropdown>
                 <DropdownMenuTrigger asChild>
                   <Button
-                    className="radix-state-open:rounded-r-md"
+                    className="ltr:radix-state-open:rounded-r-(--btn-group-radius) rtl:radix-state-open:rounded-l-(--btn-group-radius)"
                     type="button"
                     color="secondary"
                     variant="icon"
@@ -129,6 +128,7 @@ export default function OtherTeamListItem(props: Props) {
                           color="destructive"
                           type="button"
                           StartIcon="trash"
+                          className="rounded-t-none"
                           onClick={(e) => {
                             e.stopPropagation();
                           }}>

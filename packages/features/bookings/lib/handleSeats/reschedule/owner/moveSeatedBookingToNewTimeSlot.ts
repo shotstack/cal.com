@@ -1,16 +1,16 @@
-// eslint-disable-next-line no-restricted-imports
+ 
 import { cloneDeep } from "lodash";
 
-import type EventManager from "@calcom/core/EventManager";
-import { sendRescheduledEmails } from "@calcom/emails";
+import { sendRescheduledEmailsAndSMS } from "@calcom/emails/email-manager";
+import type EventManager from "@calcom/features/bookings/lib/EventManager";
 import prisma from "@calcom/prisma";
 import type { AdditionalInformation, AppsStatus } from "@calcom/types/Calendar";
 
-import { addVideoCallDataToEvent } from "../../../handleNewBooking";
-import type { createLoggerWithEventDetails } from "../../../handleNewBooking";
+import { addVideoCallDataToEvent } from "../../../handleNewBooking/addVideoCallDataToEvent";
+import type { Booking } from "../../../handleNewBooking/createBooking";
 import { findBookingQuery } from "../../../handleNewBooking/findBookingQuery";
 import { handleAppsStatus } from "../../../handleNewBooking/handleAppsStatus";
-import type { Booking } from "../../../handleNewBooking/types";
+import type { createLoggerWithEventDetails } from "../../../handleNewBooking/logger";
 import type { SeatedBooking, RescheduleSeatedBookingObject } from "../../types";
 
 const moveSeatedBookingToNewTimeSlot = async (
@@ -48,7 +48,7 @@ const moveSeatedBookingToNewTimeSlot = async (
     },
   });
 
-  evt = addVideoCallDataToEvent(newBooking.references, evt);
+  evt = { ...addVideoCallDataToEvent(newBooking.references, evt), bookerUrl: evt.bookerUrl };
 
   const copyEvent = cloneDeep(evt);
 
@@ -90,7 +90,7 @@ const moveSeatedBookingToNewTimeSlot = async (
   if (noEmail !== true && isConfirmedByDefault) {
     const copyEvent = cloneDeep(evt);
     loggerWithEventDetails.debug("Emails: Sending reschedule emails - handleSeats");
-    await sendRescheduledEmails(
+    await sendRescheduledEmailsAndSMS(
       {
         ...copyEvent,
         additionalNotes, // Resets back to the additionalNote input and not the override value

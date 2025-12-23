@@ -1,13 +1,14 @@
 import { PrismaReadService } from "@/modules/prisma/prisma-read.service";
 import { PrismaWriteService } from "@/modules/prisma/prisma-write.service";
 import { TestingModule } from "@nestjs/testing";
-import { Prisma, Team } from "@prisma/client";
+
+import type { Prisma, Team } from "@calcom/prisma/client";
 
 export class OrganizationRepositoryFixture {
   private primaReadClient: PrismaReadService["prisma"];
   private prismaWriteClient: PrismaWriteService["prisma"];
 
-  constructor(private readonly module: TestingModule) {
+  constructor(module: TestingModule) {
     this.primaReadClient = module.get(PrismaReadService).prisma;
     this.prismaWriteClient = module.get(PrismaWriteService).prisma;
   }
@@ -19,7 +20,10 @@ export class OrganizationRepositoryFixture {
   async create(data: Prisma.TeamCreateInput) {
     return await this.prismaWriteClient.$transaction(async (prisma) => {
       const team = await prisma.team.create({
-        data,
+        data: {
+          ...data,
+          isOrganization: true,
+        },
       });
 
       await prisma.organizationSettings.create({
@@ -30,6 +34,20 @@ export class OrganizationRepositoryFixture {
         },
       });
       return team;
+    });
+  }
+
+  async updateSettings(
+    teamId: Team["id"],
+    settings: {
+      orgAutoAcceptEmail?: string;
+      isOrganizationVerified?: boolean;
+      isOrganizationConfigured?: boolean;
+    }
+  ) {
+    return this.prismaWriteClient.organizationSettings.update({
+      where: { organizationId: teamId },
+      data: settings,
     });
   }
 

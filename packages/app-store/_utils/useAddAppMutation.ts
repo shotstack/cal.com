@@ -18,7 +18,7 @@ type CustomUseMutationOptions =
   | Omit<UseMutationOptions<unknown, unknown, unknown, unknown>, "mutationKey" | "mutationFn" | "onSuccess">
   | undefined;
 
-type AddAppMutationData = { setupPending: boolean } | void;
+type AddAppMutationData = { setupPending: boolean; message?: string } | void;
 export type UseAddAppMutationOptions = CustomUseMutationOptions & {
   onSuccess?: (data: AddAppMutationData) => void;
   installGoogleVideo?: boolean;
@@ -67,8 +67,8 @@ function useAddAppMutation(_type: App["type"] | null, options?: UseAddAppMutatio
       const state: IntegrationOAuthCallbackState = {
         onErrorReturnTo,
         fromApp: true,
-        ...(type === "google_calendar" && { installGoogleVideo: options?.installGoogleVideo }),
         ...(teamId && { teamId }),
+        ...(type === "google_calendar" && { installGoogleVideo: options?.installGoogleVideo }),
         ...(returnTo && { returnTo }),
         ...(defaultInstall && { defaultInstall }),
       };
@@ -94,18 +94,19 @@ function useAddAppMutation(_type: App["type"] | null, options?: UseAddAppMutatio
       if (externalUrl) {
         // TODO: For Omni installation to authenticate and come back to the page where installation was initiated, some changes need to be done in all apps' add callbacks
         gotoUrl(json.url, json.newTab);
-        return { setupPending: !json.newTab };
+        return { setupPending: !json.newTab, message: json.message };
       } else if (json.url) {
         gotoUrl(json.url, json.newTab);
         return {
           setupPending:
             json?.url?.endsWith("/setup") || json?.url?.includes("/apps/installation/event-types"),
+          message: json.message,
         };
       } else if (returnTo) {
         gotoUrl(returnTo, false);
-        return { setupPending: true };
+        return { setupPending: true, message: json.message };
       } else {
-        return { setupPending: false };
+        return { setupPending: false, message: json.message };
       }
     },
   });

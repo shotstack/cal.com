@@ -1,13 +1,13 @@
 import { decodeHTML } from "entities";
-import { createTransport } from "nodemailer";
 import { z } from "zod";
 
 import dayjs from "@calcom/dayjs";
-import { getFeatureFlag } from "@calcom/features/flags/server/utils";
-import { getErrorFromUnknown } from "@calcom/lib/errors";
+import { FeaturesRepository } from "@calcom/features/flags/features.repository";
+import isSmsCalEmail from "@calcom/lib/isSmsCalEmail";
 import { serverConfig } from "@calcom/lib/serverConfig";
+import { getServerErrorFromUnknown } from "@calcom/lib/server/getServerErrorFromUnknown";
 import { setTestEmail } from "@calcom/lib/testEmails";
-import prisma from "@calcom/prisma";
+import { prisma } from "@calcom/prisma";
 
 import { sanitizeDisplayName } from "../lib/sanitizeDisplayName";
 
@@ -30,7 +30,8 @@ export default class BaseEmail {
     return {};
   }
   public async sendEmail() {
-    const emailsDisabled = await getFeatureFlag(prisma, "emails");
+    const featuresRepository = new FeaturesRepository(prisma);
+    const emailsDisabled = await featuresRepository.checkIfFeatureIsEnabledGlobally("emails");
     /** If email kill switch exists and is active, we prevent emails being sent. */
     if (emailsDisabled) {
       console.warn("Skipped Sending Email due to active Kill Switch");
@@ -52,6 +53,11 @@ export default class BaseEmail {
     const from = "from" in payload ? (payload.from as string) : "";
     const to = "to" in payload ? (payload.to as string) : "";
 
+    if (isSmsCalEmail(to)) {
+      console.log(`Skipped Sending Email to faux email: ${to}`);
+      return new Promise((r) => r(`Skipped Sending Email to faux email: ${to}`));
+    }
+
     const sanitizedFrom = sanitizeDisplayName(from);
     const sanitizedTo = sanitizeDisplayName(to);
 
@@ -65,12 +71,13 @@ export default class BaseEmail {
       },
       ...(parseSubject.success && { subject: decodeHTML(parseSubject.data) }),
     };
+    const { createTransport } = await import("nodemailer");
     await new Promise((resolve, reject) =>
       createTransport(this.getMailerOptions().transport).sendMail(
         payloadWithUnEscapedSubject,
         (_err, info) => {
           if (_err) {
-            const err = getErrorFromUnknown(_err);
+            const err = getServerErrorFromUnknown(_err);
             this.printNodeMailerError(err);
             reject(err);
           } else {

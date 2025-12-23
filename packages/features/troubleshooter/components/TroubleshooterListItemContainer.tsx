@@ -1,6 +1,6 @@
 import type { PropsWithChildren } from "react";
 
-import classNames from "@calcom/lib/classNames";
+import classNames from "@calcom/ui/classNames";
 
 interface TroubleshooterListItemContainerProps {
   title: string;
@@ -36,7 +36,7 @@ export function TroubleshooterListItemContainer({
   return (
     <div className="[&>*:first-child]:rounded-t-md ">
       <TroubleshooterListItemHeader {...rest} />
-      <div className="border-subtle flex flex-col space-y-3 rounded-b-md border p-4">{children}</div>
+      <div className="border-subtle flex flex-col stack-y-3 rounded-b-md border p-4">{children}</div>
     </div>
   );
 }

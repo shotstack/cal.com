@@ -6,8 +6,14 @@ import {
   isAcceptedCurrencyCode,
 } from "@calcom/app-store/paypal/lib/currencyOptions";
 import type { EventTypeAppSettingsComponent } from "@calcom/app-store/types";
+import {
+  convertToSmallestCurrencyUnit,
+  convertFromSmallestToPresentableCurrencyUnit,
+} from "@calcom/lib/currencyConversions";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { Alert, Select, TextField } from "@calcom/ui";
+import { Alert } from "@calcom/ui/components/alert";
+import { Select } from "@calcom/ui/components/form";
+import { TextField } from "@calcom/ui/components/form";
 
 import { PaypalPaymentOptions as paymentOptions } from "../zod";
 
@@ -20,7 +26,7 @@ const EventTypeAppSettingsInterface: EventTypeAppSettingsComponent = ({
 }) => {
   const price = getAppData("price");
 
-  const currency = getAppData("currency");
+  const currency = getAppData("currency") || currencyOptions[0].value;
   const [selectedCurrency, setSelectedCurrency] = useState(currencyOptions.find((c) => c.value === currency));
   const [currencySymbol, setCurrencySymbol] = useState(
     isAcceptedCurrencyCode(currency) ? currencySymbols[currency] : ""
@@ -71,12 +77,12 @@ const EventTypeAppSettingsInterface: EventTypeAppSettingsComponent = ({
           placeholder="Price"
           data-testid="paypal-price-input"
           onChange={(e) => {
-            setAppData("price", Number(e.target.value) * 100);
+            setAppData("price", convertToSmallestCurrencyUnit(Number(e.target.value), currency));
             if (selectedCurrency) {
               setAppData("currency", selectedCurrency.value);
             }
           }}
-          value={price > 0 ? price / 100 : undefined}
+          value={price > 0 ? convertFromSmallestToPresentableCurrencyUnit(price, currency) : undefined}
         />
       </div>
       <div className="mt-5 w-60">

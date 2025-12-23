@@ -2,13 +2,13 @@ import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import { useId } from "@radix-ui/react-id";
 import type { InputHTMLAttributes } from "react";
 import React, { forwardRef } from "react";
+import classNames from "@calcom/ui/classNames";
 
-import classNames from "@calcom/lib/classNames";
-import { Icon } from "@calcom/ui";
+import { Icon } from "../../icon";
 
 type Props = InputHTMLAttributes<HTMLInputElement> & {
   label?: React.ReactNode;
-  description: string;
+  description?: string;
   descriptionAsLabel?: boolean;
   informationIconText?: string;
   error?: boolean;
@@ -61,7 +61,7 @@ const CheckboxField = forwardRef<HTMLInputElement, Props>(
           </div>
         )}
         <div className="w-full">
-          <div className="relative flex items-center">
+          <div className="hover:bg-subtle relative flex w-fit items-center rounded-md p-1">
             {React.createElement(
               descriptionAsLabel ? "label" : "div",
               {
@@ -80,10 +80,10 @@ const CheckboxField = forwardRef<HTMLInputElement, Props>(
                     disabled={disabled}
                     id={rest.id ? rest.id : id}
                     className={classNames(
-                      "text-emphasis focus:ring-emphasis dark:text-muted border-default bg-default focus:bg-default active:bg-default h-4 w-4 rounded transition checked:hover:bg-gray-600 focus:outline-none focus:ring-0 ltr:mr-2 rtl:ml-2",
+                      "text-emphasis focus:ring-emphasis dark:text-muted border-default bg-default focus:bg-default active:bg-default checked:border-transparent! checked:bg-gray-800! h-4 w-4 rounded-[4px] transition focus:outline-none focus:ring-0 ltr:mr-2 rtl:ml-2",
                       !error && disabled
                         ? "cursor-not-allowed bg-gray-300 checked:bg-gray-300 hover:bg-gray-300 hover:checked:bg-gray-300"
-                        : "hover:bg-subtle hover:border-emphasis checked:bg-gray-800",
+                        : "hover:bg-subtle hover:border-emphasis",
                       error &&
                         "border-error hover:bg-error hover:border-error checked:bg-darkerror checked:hover:border-error checked:hover:bg-darkerror",
                       rest.className
@@ -92,13 +92,24 @@ const CheckboxField = forwardRef<HTMLInputElement, Props>(
                 </div>
                 {descriptionAsSafeHtml ? (
                   <span
-                    className={classNames("text-sm", rest.descriptionClassName)}
+                    className={classNames(
+                      "text-default ml-2 text-sm [&_a]:text-blue-500",
+                      !label && "font-medium",
+                      rest.descriptionClassName
+                    )}
                     dangerouslySetInnerHTML={{
                       __html: descriptionAsSafeHtml,
                     }}
                   />
                 ) : (
-                  <span className={classNames("text-sm", rest.descriptionClassName)}>{description}</span>
+                  <span
+                    className={classNames(
+                      "text-default ml-2 text-sm",
+                      !label && "font-medium",
+                      rest.descriptionClassName
+                    )}>
+                    {description}
+                  </span>
                 )}
               </>
             )}

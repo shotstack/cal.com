@@ -1,24 +1,29 @@
 import { getCalendar } from "@calcom/app-store/_utils/getCalendar";
-import { updateMeeting } from "@calcom/core/videoClient";
-import { sendCancelledSeatEmails } from "@calcom/emails";
+import { getAllDelegationCredentialsForUserIncludeServiceAccountKey } from "@calcom/app-store/delegationCredential";
+import { getDelegationCredentialOrFindRegularCredential } from "@calcom/app-store/delegationCredential";
+import { sendCancelledSeatEmailsAndSMS } from "@calcom/emails/email-manager";
+import { updateMeeting } from "@calcom/features/conferencing/lib/videoClient";
+import { WorkflowRepository } from "@calcom/features/ee/workflows/repositories/WorkflowRepository";
 import sendPayload from "@calcom/features/webhooks/lib/sendOrSchedulePayload";
-import type { EventTypeInfo } from "@calcom/features/webhooks/lib/sendPayload";
+import type { EventPayloadType, EventTypeInfo } from "@calcom/features/webhooks/lib/sendPayload";
+import { getRichDescription } from "@calcom/lib/CalEventParser";
 import { HttpError } from "@calcom/lib/http-error";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { getTranslation } from "@calcom/lib/server/i18n";
 import prisma from "@calcom/prisma";
 import { WebhookTriggerEvents } from "@calcom/prisma/enums";
-import { credentialForCalendarServiceSelect } from "@calcom/prisma/selects/credential";
-import { schemaBookingCancelParams } from "@calcom/prisma/zod-utils";
+import { bookingCancelAttendeeSeatSchema } from "@calcom/prisma/zod-utils";
 import type { EventTypeMetadata } from "@calcom/prisma/zod-utils";
-import { deleteAllWorkflowReminders } from "@calcom/trpc/server/routers/viewer/workflows/util";
 import type { CalendarEvent } from "@calcom/types/Calendar";
 
-import type { CustomRequest } from "../../handleCancelBooking";
+import type { BookingToDelete } from "../../handleCancelBooking";
 
 async function cancelAttendeeSeat(
-  req: CustomRequest,
+  data: {
+    seatReferenceUid?: string;
+    bookingToDelete: BookingToDelete;
+  },
   dataForWebhooks: {
     webhooks: {
       id: string;
@@ -32,10 +37,13 @@ async function cancelAttendeeSeat(
   },
   eventTypeMetadata: EventTypeMetadata
 ) {
-  const { seatReferenceUid } = schemaBookingCancelParams.parse(req.body);
+  const input = bookingCancelAttendeeSeatSchema.safeParse({
+    seatReferenceUid: data.seatReferenceUid,
+  });
   const { webhooks, evt, eventTypeInfo } = dataForWebhooks;
-  if (!seatReferenceUid) return;
-  const bookingToDelete = req.bookingToDelete;
+  if (!input.success) return;
+  const { seatReferenceUid } = input.data;
+  const bookingToDelete = data.bookingToDelete;
   if (!bookingToDelete?.attendees.length || bookingToDelete.attendees.length < 2) return;
 
   if (!bookingToDelete.userId) {
@@ -60,9 +68,15 @@ async function cancelAttendeeSeat(
       },
     }),
   ]);
-  req.statusCode = 200;
 
   const attendee = bookingToDelete?.attendees.find((attendee) => attendee.id === seatReference.attendeeId);
+  const bookingToDeleteUser = bookingToDelete.user ?? null;
+  const delegationCredentials = bookingToDeleteUser
+    ? // We fetch delegation credentials with ServiceAccount key as CalendarService instance created later in the flow needs it
+      await getAllDelegationCredentialsForUserIncludeServiceAccountKey({
+        user: { email: bookingToDeleteUser.email, id: bookingToDeleteUser.id },
+      })
+    : [];
 
   if (attendee) {
     /* If there are references then we should update them as well */
@@ -70,20 +84,34 @@ async function cancelAttendeeSeat(
     const integrationsToUpdate = [];
 
     for (const reference of bookingToDelete.references) {
-      if (reference.credentialId) {
-        const credential = await prisma.credential.findUnique({
-          where: {
-            id: reference.credentialId,
+      if (reference.credentialId || reference.delegationCredentialId) {
+        const credential = await getDelegationCredentialOrFindRegularCredential({
+          id: {
+            credentialId: reference.credentialId,
+            delegationCredentialId: reference.delegationCredentialId,
           },
-          select: credentialForCalendarServiceSelect,
+          delegationCredentials,
         });
 
         if (credential) {
+          const videoCallReference = bookingToDelete.references.find((reference) =>
+            reference.type.includes("_video")
+          );
+
+          if (videoCallReference) {
+            evt.videoCallData = {
+              type: videoCallReference.type,
+              id: videoCallReference.meetingId,
+              password: videoCallReference?.meetingPassword,
+              url: videoCallReference.meetingUrl,
+            };
+          }
           const updatedEvt = {
             ...evt,
             attendees: evt.attendees.filter((evtAttendee) => attendee.email !== evtAttendee.email),
+            calendarDescription: getRichDescription(evt),
           };
-          if (reference.type.includes("_video")) {
+          if (reference.type.includes("_video") && reference.type !== "google_meet_video") {
             integrationsToUpdate.push(updateMeeting(credential, updatedEvt, reference));
           }
           if (reference.type.includes("_calendar")) {
@@ -100,14 +128,14 @@ async function cancelAttendeeSeat(
 
     try {
       await Promise.all(integrationsToUpdate);
-    } catch (error) {
+    } catch {
       // Shouldn't stop code execution if integrations fail
       // as integrations was already updated
     }
 
     const tAttendees = await getTranslation(attendee.locale ?? "en", "common");
 
-    await sendCancelledSeatEmails(
+    await sendCancelledSeatEmailsAndSMS(
       evt,
       {
         ...attendee,
@@ -129,13 +157,21 @@ async function cancelAttendeeSeat(
       ]
     : [];
 
+  const payload: EventPayloadType = {
+    ...evt,
+    ...eventTypeInfo,
+    status: "CANCELLED",
+    smsReminderNumber: bookingToDelete.smsReminderNumber || undefined,
+  };
+
   const promises = webhooks.map((webhook) =>
-    sendPayload(webhook.secret, WebhookTriggerEvents.BOOKING_CANCELLED, new Date().toISOString(), webhook, {
-      ...evt,
-      ...eventTypeInfo,
-      status: "CANCELLED",
-      smsReminderNumber: bookingToDelete.smsReminderNumber || undefined,
-    }).catch((e) => {
+    sendPayload(
+      webhook.secret,
+      WebhookTriggerEvents.BOOKING_CANCELLED,
+      new Date().toISOString(),
+      webhook,
+      payload
+    ).catch((e) => {
       logger.error(
         `Error executing webhook for event: ${WebhookTriggerEvents.BOOKING_CANCELLED}, URL: ${webhook.subscriberUrl}, bookingId: ${evt.bookingId}, bookingUid: ${evt.uid}`,
         safeStringify(e)
@@ -148,7 +184,7 @@ async function cancelAttendeeSeat(
     bookingToDelete?.workflowReminders.filter((reminder) => reminder.seatReferenceId === seatReferenceUid) ??
     null;
 
-  await deleteAllWorkflowReminders(workflowRemindersForAttendee);
+  await WorkflowRepository.deleteAllWorkflowReminders(workflowRemindersForAttendee);
 
   return { success: true };
 }

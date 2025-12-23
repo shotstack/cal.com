@@ -1,21 +1,23 @@
-import type { Booking, BookingReference, User } from "@prisma/client";
-import type { TFunction } from "next-i18next";
+import type { TFunction } from "i18next";
 
-import { CalendarEventBuilder } from "@calcom/core/builders/CalendarEvent/builder";
-import { CalendarEventDirector } from "@calcom/core/builders/CalendarEvent/director";
-import { deleteMeeting } from "@calcom/core/videoClient";
 import dayjs from "@calcom/dayjs";
-import { sendRequestRescheduleEmail } from "@calcom/emails";
+import { sendRequestRescheduleEmailAndSMS } from "@calcom/emails/email-manager";
+import { deleteMeeting } from "@calcom/features/conferencing/lib/videoClient";
+import { CalendarEventBuilder } from "@calcom/lib/builders/CalendarEvent/builder";
+import { CalendarEventDirector } from "@calcom/lib/builders/CalendarEvent/director";
 import logger from "@calcom/lib/logger";
 import { getTranslation } from "@calcom/lib/server/i18n";
 import prisma from "@calcom/prisma";
+import type { Booking, BookingReference, User } from "@calcom/prisma/client";
 import { BookingStatus } from "@calcom/prisma/enums";
 import type { EventTypeMetadata } from "@calcom/prisma/zod-utils";
 import type { Person } from "@calcom/types/Calendar";
 
 import { getCalendar } from "../../_utils/getCalendar";
 
-type PersonAttendeeCommonFields = Pick<User, "id" | "email" | "name" | "locale" | "timeZone" | "username">;
+type PersonAttendeeCommonFields = Pick<User, "id" | "email" | "name" | "locale" | "timeZone" | "username"> & {
+  phoneNumber?: string | null;
+};
 
 const Reschedule = async (bookingUid: string, cancellationReason: string) => {
   const bookingToReschedule = await prisma.booking.findFirstOrThrow({
@@ -30,6 +32,16 @@ const Reschedule = async (bookingUid: string, cancellationReason: string) => {
       location: true,
       attendees: true,
       references: true,
+      eventType: {
+        include: {
+          team: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      },
       user: {
         select: {
           id: true,
@@ -40,11 +52,6 @@ const Reschedule = async (bookingUid: string, cancellationReason: string) => {
           username: true,
           credentials: true,
           destinationCalendar: true,
-        },
-      },
-      eventType: {
-        select: {
-          metadata: true,
         },
       },
     },
@@ -60,7 +67,7 @@ const Reschedule = async (bookingUid: string, cancellationReason: string) => {
 
   if (bookingToReschedule && bookingToReschedule.eventTypeId && bookingToReschedule.user) {
     const userOwner = bookingToReschedule.user;
-    const event = await prisma.eventType.findFirstOrThrow({
+    const event = await prisma.eventType.findUniqueOrThrow({
       select: {
         title: true,
       },
@@ -93,6 +100,7 @@ const Reschedule = async (bookingUid: string, cancellationReason: string) => {
           username: user?.username || "",
           language: { translate: selectedLanguage, locale: user.locale || "en" },
           timeZone: user?.timeZone,
+          phoneNumber: user?.phoneNumber,
         };
       });
     };
@@ -110,6 +118,14 @@ const Reschedule = async (bookingUid: string, cancellationReason: string) => {
         tAttendees
       ),
       organizer: userOwnerAsPeopleType,
+      hideOrganizerEmail: bookingToReschedule.eventType?.hideOrganizerEmail,
+      team: bookingToReschedule.eventType?.team
+        ? {
+            name: bookingToReschedule.eventType.team.name,
+            id: bookingToReschedule.eventType.team.id,
+            members: [],
+          }
+        : undefined,
     });
     const director = new CalendarEventDirector();
     director.setBuilder(builder);
@@ -147,7 +163,7 @@ const Reschedule = async (bookingUid: string, cancellationReason: string) => {
 
     // Send emails
     try {
-      await sendRequestRescheduleEmail(
+      await sendRequestRescheduleEmailAndSMS(
         builder.calendarEvent,
         {
           rescheduleLink: builder.rescheduleLink,

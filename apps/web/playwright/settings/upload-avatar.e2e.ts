@@ -64,12 +64,10 @@ test.describe("User Avatar", async () => {
       );
       // verify objectKey is passed to the OG image
       // yes, OG image URI encodes at multiple places.. don't want to mess with that.
-      await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
-        "content",
-        new RegExp(
-          encodeURIComponent(`meetingImage=${encodeURIComponent(`${CAL_URL}/api/avatar/${objectKey}.png`)}`)
-        )
-      );
+      const ogImageLocator = page.locator('meta[property="og:image"]');
+      await expect(ogImageLocator).toHaveCount(1);
+      const searchParam = `meetingImage=${encodeURIComponent(`${CAL_URL}/api/avatar/${objectKey}.png`)}`;
+      await expect(ogImageLocator).toHaveAttribute("content", new RegExp(encodeURIComponent(searchParam)));
     });
   });
 });
@@ -192,7 +190,7 @@ test.describe("Organization Logo", async () => {
     await test.step("it shows the correct logo on the unpublished public page", async () => {
       await page.goto(`/org/${requestedSlug}`);
 
-      expect(await page.locator('[data-testid="empty-screen"]').count()).toBe(1);
+      await expect(page.locator('[data-testid="empty-screen"]')).toHaveCount(1);
 
       await expect(page.locator(`img`)).toHaveAttribute(
         "src",

@@ -1,5 +1,29 @@
 import { z } from "zod";
 
+import { raqbQueryValueSchema } from "@calcom/lib/raqb/zod";
+
+import { routingFormAppDataSchemas } from "./appDataSchemas";
+
+export type FieldOption = {
+  label: string;
+  id: string | null;
+};
+
+export type TNonRouterField = {
+  id: string;
+  label: string;
+  identifier?: string;
+  placeholder?: string;
+  type: string;
+  /** @deprecated in favour of `options` */
+  selectText?: string;
+  required?: boolean;
+  deleted?: boolean;
+  options?: FieldOption[];
+};
+
+// Note: zodNonRouterField is NOT annotated with z.ZodType because it uses .extend() below
+// which requires the full ZodObject type to be preserved
 export const zodNonRouterField = z.object({
   id: z.string(),
   label: z.string(),
@@ -25,13 +49,21 @@ export const zodNonRouterField = z.object({
     .optional(),
 });
 
+export type TRouterField = TNonRouterField & {
+  routerId: string;
+};
+
+// Note: zodRouterField is NOT annotated with z.ZodType because it uses .extend() below
 export const zodRouterField = zodNonRouterField.extend({
   routerId: z.string(),
 });
 
+export type TField = TNonRouterField | TRouterField;
+export type TFields = TField[] | undefined;
+
 // This ordering is important - If routerId is present then it should be in the parsed object. Moving zodNonRouterField to first position doesn't do that
-export const zodField = z.union([zodRouterField, zodNonRouterField]);
-export const zodFields = z.array(zodField).optional();
+export const zodField: z.ZodType<TField> = z.union([zodRouterField, zodNonRouterField]);
+export const zodFields: z.ZodType<TFields> = z.array(zodField).optional();
 
 export const zodNonRouterFieldView = zodNonRouterField;
 export const zodRouterFieldView = zodRouterField.extend({
@@ -49,22 +81,50 @@ export const zodFieldView = z.union([zodNonRouterFieldView, zodRouterFieldView])
 
 export const zodFieldsView = z.array(zodFieldView).optional();
 
+export enum RouteActionType {
+  CustomPageMessage = "customPageMessage",
+  ExternalRedirectUrl = "externalRedirectUrl",
+  EventTypeRedirectUrl = "eventTypeRedirectUrl",
+}
+
+export const routeActionTypeSchema = z.nativeEnum(RouteActionType);
+
+export const attributeRoutingConfigSchema = z
+  .object({
+    skipContactOwner: z.boolean().optional(),
+    salesforce: routingFormAppDataSchemas["salesforce"],
+  })
+  .nullish();
+
 export const zodNonRouterRoute = z.object({
   id: z.string(),
-  queryValue: z.object({
-    id: z.string().optional(),
-    type: z.union([z.literal("group"), z.literal("switch_group")]),
-    children1: z.any(),
-    properties: z.any(),
-  }),
+  name: z.string().optional(),
+  attributeIdForWeights: z.string().optional(),
+  attributeRoutingConfig: attributeRoutingConfigSchema,
+
+  // TODO: It should be renamed to formFieldsQueryValue but it would take some effort
+  /**
+   * RAQB query value for form fields
+   * BRANDED to ensure we don't give it Attributes
+   */
+  queryValue: raqbQueryValueSchema.brand<"formFieldsQueryValue">(),
+  /**
+   * RAQB query value for attributes. It is only applicable for Team Events as it is used to find matching team members
+   * BRANDED to ensure we don't give it Form Fields
+   */
+  attributesQueryValue: raqbQueryValueSchema.optional(),
+  /**
+   * RAQB query value for fallback of `attributesQueryValue`
+   * BRANDED to ensure we don't give it Form Fields, It needs Attributes
+   */
+  fallbackAttributesQueryValue: raqbQueryValueSchema.optional(),
+  /**
+   * Whether the route is a fallback if no other routes match
+   */
   isFallback: z.boolean().optional(),
   action: z.object({
-    // TODO: Make it a union type of "customPageMessage" and ..
-    type: z.union([
-      z.literal("customPageMessage"),
-      z.literal("externalRedirectUrl"),
-      z.literal("eventTypeRedirectUrl"),
-    ]),
+    type: routeActionTypeSchema,
+    eventTypeId: z.number().optional(),
     value: z.string(),
   }),
 });
@@ -74,6 +134,7 @@ export const zodNonRouterRouteView = zodNonRouterRoute;
 export const zodRouterRoute = z.object({
   // This is the id of the Form being used as router
   id: z.string(),
+  name: z.string().optional(),
   isRouter: z.literal(true),
 });
 
@@ -97,3 +158,12 @@ export const zodRoutesView = z.union([z.array(zodRouteView), z.null()]).optional
 export const appDataSchema = z.any();
 
 export const appKeysSchema = z.object({});
+
+// This is different from FormResponse in types.d.ts in that it has label optional. We don't seem to be using label at this point, so we might want to use this only while saving the response when Routing Form is submitted
+// Record key is formFieldId
+export const routingFormResponseInDbSchema = z.record(
+  z.object({
+    label: z.string().optional(),
+    value: z.union([z.string(), z.number(), z.array(z.string())]),
+  })
+);

@@ -1,4 +1,3 @@
-import type { Booking, Payment, PaymentOption, Prisma } from "@prisma/client";
 import { v4 as uuidv4 } from "uuid";
 import z from "zod";
 
@@ -8,6 +7,7 @@ import { ErrorCode } from "@calcom/lib/errorCodes";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import prisma from "@calcom/prisma";
+import type { Booking, Payment, PaymentOption, Prisma } from "@calcom/prisma/client";
 import type { IAbstractPaymentService } from "@calcom/types/PaymentService";
 
 import { paymentOptionEnum } from "../zod";
@@ -37,7 +37,7 @@ export class PaymentService implements IAbstractPaymentService {
     bookingId: Booking["id"]
   ) {
     try {
-      const booking = await prisma.booking.findFirst({
+      const booking = await prisma.booking.findUnique({
         select: {
           uid: true,
           title: true,
@@ -105,15 +105,15 @@ export class PaymentService implements IAbstractPaymentService {
   async collectCard(
     payment: Pick<Prisma.PaymentUncheckedCreateInput, "amount" | "currency">,
     bookingId: number,
-    _bookerEmail: string,
-    paymentOption: PaymentOption
+    paymentOption: PaymentOption,
+    _bookerEmail?: string | null
   ): Promise<Payment> {
     // Ensure that the payment service can support the passed payment option
     if (paymentOptionEnum.parse(paymentOption) !== "HOLD") {
       throw new Error("Payment option is not compatible with create method");
     }
     try {
-      const booking = await prisma.booking.findFirst({
+      const booking = await prisma.booking.findUnique({
         select: {
           uid: true,
           title: true,

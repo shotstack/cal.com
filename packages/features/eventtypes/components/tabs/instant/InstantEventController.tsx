@@ -1,34 +1,31 @@
-import type { Webhook } from "@prisma/client";
 import { useSession } from "next-auth/react";
 import { useState } from "react";
 import { useFormContext, Controller } from "react-hook-form";
 import { components } from "react-select";
 import type { OptionProps, SingleValueProps } from "react-select";
 
+import { Dialog } from "@calcom/features/components/controlled-dialog";
 import LicenseRequired from "@calcom/features/ee/common/components/LicenseRequired";
 import useLockedFieldsManager from "@calcom/features/ee/managed-event-types/hooks/useLockedFieldsManager";
 import type { EventTypeSetup, FormValues, AvailabilityOption } from "@calcom/features/eventtypes/lib/types";
 import { WebhookForm } from "@calcom/features/webhooks/components";
-import type { WebhookFormSubmitData } from "@calcom/features/webhooks/components/WebhookForm";
+import type { TWebhook, WebhookFormSubmitData } from "@calcom/features/webhooks/components/WebhookForm";
 import WebhookListItem from "@calcom/features/webhooks/components/WebhookListItem";
 import { subscriberUrlReserved } from "@calcom/features/webhooks/lib/subscriberUrlReserved";
-import { classNames } from "@calcom/lib";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { WebhookTriggerEvents } from "@calcom/prisma/enums";
 import { trpc } from "@calcom/trpc/react";
-import {
-  Alert,
-  Button,
-  EmptyScreen,
-  SettingsToggle,
-  Dialog,
-  DialogContent,
-  showToast,
-  TextField,
-  Label,
-  Select,
-  Badge,
-} from "@calcom/ui";
+import classNames from "@calcom/ui/classNames";
+import { Alert } from "@calcom/ui/components/alert";
+import { Badge } from "@calcom/ui/components/badge";
+import { Button } from "@calcom/ui/components/button";
+import { DialogContent } from "@calcom/ui/components/dialog";
+import { EmptyScreen } from "@calcom/ui/components/empty-screen";
+import { Label } from "@calcom/ui/components/form";
+import { TextField } from "@calcom/ui/components/form";
+import { Select } from "@calcom/ui/components/form";
+import { SettingsToggle } from "@calcom/ui/components/form";
+import { showToast } from "@calcom/ui/components/toast";
 
 type InstantEventControllerProps = {
   eventType: EventTypeSetup;
@@ -75,6 +72,10 @@ export default function InstantEventController({
   const session = useSession();
   const [instantEventState, setInstantEventState] = useState<boolean>(eventType?.isInstantEvent ?? false);
   const formMethods = useFormContext<FormValues>();
+
+  const [parameters, setParameters] = useState<string[]>(
+    formMethods.getValues("instantMeetingParameters") || []
+  );
 
   const { shouldLockDisableProps } = useLockedFieldsManager({
     eventType,
@@ -171,6 +172,56 @@ export default function InstantEventController({
                             );
                           }}
                         />
+                        <div>
+                          <Label>{t("only_show_if_parameter_set")}</Label>
+                          <div className="stack-y-2">
+                            {parameters.map((parameter, index) => (
+                              <div key={index} className="flex gap-2">
+                                <TextField
+                                  required
+                                  name={`parameter-${index}`}
+                                  labelSrOnly
+                                  type="text"
+                                  value={parameter}
+                                  containerClassName="flex-1 max-w-80"
+                                  onChange={(e) => {
+                                    const newParameters = [...parameters];
+                                    newParameters[index] = e.target.value;
+                                    setParameters(newParameters);
+                                    formMethods.setValue("instantMeetingParameters", newParameters, {
+                                      shouldDirty: true,
+                                    });
+                                  }}
+                                />
+                                <Button
+                                  type="button"
+                                  color="destructive"
+                                  variant="icon"
+                                  StartIcon="trash"
+                                  onClick={() => {
+                                    const newParameters = parameters.filter((_, i) => i !== index);
+                                    setParameters(newParameters);
+                                    formMethods.setValue("instantMeetingParameters", newParameters, {
+                                      shouldDirty: true,
+                                    });
+                                  }}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          <Button
+                            color="minimal"
+                            StartIcon="plus"
+                            onClick={() => {
+                              const newParameters = [...parameters, ""];
+                              setParameters(newParameters);
+                              formMethods.setValue("instantMeetingParameters", newParameters, {
+                                shouldDirty: true,
+                              });
+                            }}>
+                            {t("add_parameter")}
+                          </Button>
+                        </div>
                         <Controller
                           name="instantMeetingExpiryTimeOffsetInSeconds"
                           render={({ field: { value, onChange } }) => (
@@ -191,6 +242,21 @@ export default function InstantEventController({
                                 data-testid="instant-meeting-expiry-time-offset"
                               />
                             </>
+                          )}
+                        />
+                        <Controller
+                          name="autoTranslateInstantMeetingTitleEnabled"
+                          render={({ field: { value, onChange } }) => (
+                            <SettingsToggle
+                              labelClassName="text-sm"
+                              title={t("auto_translate_instant_meeting_title")}
+                              checked={value}
+                              onCheckedChange={(e) => onChange(e)}
+                              data-testid="auto-translate-instant-meeting-title-toggle"
+                              toggleSwitchAtTheEnd={true}
+                              switchContainerClassName="border-subtle rounded-lg border py-6 px-4 sm:px-6 mt-4"
+                              description={t("auto_translate_instant_meeting_title_description")}
+                            />
                           )}
                         />
                         <InstantMeetingWebhooks eventType={eventType} />
@@ -216,14 +282,14 @@ const InstantMeetingWebhooks = ({ eventType }: { eventType: EventTypeSetup }) =>
     eventTypeId: eventType.id,
     eventTriggers: [WebhookTriggerEvents.INSTANT_MEETING],
   });
-  const { data: installedApps, isPending } = trpc.viewer.integrations.useQuery({
+  const { data: installedApps, isPending } = trpc.viewer.apps.integrations.useQuery({
     variant: "other",
     onlyInstalled: true,
   });
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
-  const [webhookToEdit, setWebhookToEdit] = useState<Webhook>();
+  const [webhookToEdit, setWebhookToEdit] = useState<TWebhook>();
 
   const editWebhookMutation = trpc.viewer.webhook.edit.useMutation({
     async onSuccess() {
@@ -312,6 +378,11 @@ const InstantMeetingWebhooks = ({ eventType }: { eventType: EventTypeSetup }) =>
                         onEditWebhook={() => {
                           setEditModalOpen(true);
                           setWebhookToEdit(webhook);
+                        }}
+                        // TODO (SEAN): Implement Permissions here when we have event-types PR merged
+                        permissions={{
+                          canEditWebhook: !webhookLockedStatus.disabled,
+                          canDeleteWebhook: !webhookLockedStatus.disabled,
                         }}
                       />
                     );

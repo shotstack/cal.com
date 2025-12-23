@@ -1,44 +1,17 @@
-import type { Team } from "@prisma/client";
+"use client";
+
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
-import { z } from "zod";
+import type { z } from "zod";
 
-import NoSSR from "@calcom/core/components/NoSSR";
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { useParamsWithFallback } from "@calcom/lib/hooks/useParamsWithFallback";
+import type { Team } from "@calcom/prisma/client";
 import type { orgSettingsSchema } from "@calcom/prisma/zod-utils";
 import { trpc } from "@calcom/trpc/react";
-import { Button, Form, Meta, TextField, showToast } from "@calcom/ui";
-
-import { getLayout } from "../../../../../settings/layouts/SettingsLayout";
-import LicenseRequired from "../../../../common/components/LicenseRequired";
-
-const paramsSchema = z.object({ id: z.coerce.number() });
-
-const OrgEditPage = () => {
-  const params = useParamsWithFallback();
-  const parsedParams = paramsSchema.safeParse(params);
-
-  if (!parsedParams.success) return <div>Invalid id</div>;
-
-  return <OrgEditView orgId={parsedParams.data.id} />;
-};
-
-const OrgEditView = ({ orgId }: { orgId: number }) => {
-  const [org] = trpc.viewer.organizations.adminGet.useSuspenseQuery({ id: orgId });
-
-  return (
-    <LicenseRequired>
-      <Meta
-        title={`Editing organization: ${org.name}`}
-        description="Here you can edit a current organization."
-      />
-      <NoSSR>
-        <OrgForm org={org} />
-      </NoSSR>
-    </LicenseRequired>
-  );
-};
+import { Button } from "@calcom/ui/components/button";
+import { Form } from "@calcom/ui/components/form";
+import { TextField } from "@calcom/ui/components/form";
+import { showToast } from "@calcom/ui/components/toast";
 
 type FormValues = {
   name: Team["name"];
@@ -46,7 +19,7 @@ type FormValues = {
   organizationSettings: z.infer<typeof orgSettingsSchema>;
 };
 
-const OrgForm = ({
+export const OrgForm = ({
   org,
 }: {
   org: FormValues & {
@@ -88,7 +61,7 @@ const OrgForm = ({
   };
 
   return (
-    <Form form={form} className="space-y-4" handleSubmit={onSubmit}>
+    <Form form={form} className="stack-y-4" handleSubmit={onSubmit}>
       <TextField label="Name" placeholder="example" required {...form.register("name")} />
       <TextField label="Slug" placeholder="example" required {...form.register("slug")} />
       <p className="text-default mt-2 text-sm">
@@ -108,6 +81,4 @@ const OrgForm = ({
   );
 };
 
-OrgEditPage.getLayout = getLayout;
-
-export default OrgEditPage;
+export default OrgForm;

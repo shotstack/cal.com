@@ -1,6 +1,6 @@
-import type { TFunction } from "next-i18next";
+import type { TFunction } from "i18next";
 
-import getLabelValueMapFromResponses from "@calcom/lib/getLabelValueMapFromResponses";
+import getLabelValueMapFromResponses from "@calcom/lib/bookings/getLabelValueMapFromResponses";
 import type { CalendarEvent } from "@calcom/types/Calendar";
 
 import { Info } from "./Info";
@@ -25,6 +25,7 @@ export function UserFieldsResponses(props: { calEvent: CalendarEvent; t: TFuncti
                 : `${labelValueMap[key] ? labelValueMap[key] : ""}`
             }
             withSpacer
+            isLabelHTML
           />
         ) : null
       )}

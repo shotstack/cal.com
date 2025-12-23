@@ -1,8 +1,7 @@
 /* eslint-disable @typescript-eslint/triple-slash-reference */
 /// <reference path="../types/ical.d.ts"/>
-import type { Prisma } from "@prisma/client";
 import ICAL from "ical.js";
-import type { Attendee, DateArray, DurationObject, Person } from "ics";
+import type { Attendee, DateArray, DurationObject } from "ics";
 import { createEvent } from "ics";
 import type { DAVAccount, DAVCalendar, DAVObject } from "tsdav";
 import {
@@ -18,13 +17,16 @@ import { v4 as uuidv4 } from "uuid";
 
 import dayjs from "@calcom/dayjs";
 import sanitizeCalendarObject from "@calcom/lib/sanitizeCalendarObject";
+import type { Person as AttendeeInCalendarEvent } from "@calcom/types/Calendar";
 import type {
   Calendar,
+  CalendarServiceEvent,
   CalendarEvent,
   CalendarEventType,
   EventBusyDate,
   IntegrationCalendar,
   NewCalendarEventType,
+  TeamMember,
 } from "@calcom/types/Calendar";
 import type { CredentialPayload } from "@calcom/types/Credential";
 
@@ -95,7 +97,7 @@ const getDuration = (start: string, end: string): DurationObject => ({
   minutes: dayjs(end).diff(dayjs(start), "minute"),
 });
 
-const mapAttendees = (attendees: Person[]): Attendee[] =>
+const mapAttendees = (attendees: AttendeeInCalendarEvent[] | TeamMember[]): Attendee[] =>
   attendees.map(({ email, name }) => ({ name, email, partstat: "NEEDS-ACTION" }));
 
 export default abstract class BaseCalendarService implements Calendar {
@@ -137,10 +139,9 @@ export default abstract class BaseCalendarService implements Calendar {
     return attendees;
   }
 
-  async createEvent(event: CalendarEvent, credentialId: number): Promise<NewCalendarEventType> {
+  async createEvent(event: CalendarServiceEvent, credentialId: number): Promise<NewCalendarEventType> {
     try {
       const calendars = await this.listCalendars(event);
-
       const uid = uuidv4();
 
       // We create local ICS files
@@ -150,7 +151,7 @@ export default abstract class BaseCalendarService implements Calendar {
         start: convertDate(event.startTime),
         duration: getDuration(event.startTime, event.endTime),
         title: event.title,
-        description: getRichDescription(event),
+        description: event.calendarDescription,
         location: getLocation(event),
         organizer: { email: event.organizer.email, name: event.organizer.name },
         attendees: this.getAttendees(event),
@@ -160,6 +161,7 @@ export default abstract class BaseCalendarService implements Calendar {
          * [UPDATE]: Since we're not using the PUBLISH method to publish the iCalendar event and creating the event directly on iCal,
          * this shouldn't be an issue and we should be able to add attendees to the event right here.
          */
+        ...(event.hideCalendarEventDetails ? { classification: "PRIVATE" } : {}),
       });
 
       if (error || !iCalString)
@@ -390,11 +392,16 @@ export default abstract class BaseCalendarService implements Calendar {
         if (vevent?.getFirstPropertyValue("transp") === "TRANSPARENT") return;
 
         const event = new ICAL.Event(vevent);
+        const dtstartProperty = vevent.getFirstProperty("dtstart");
+        const tzidFromDtstart = dtstartProperty ? (dtstartProperty as any).jCal[1].tzid : undefined;
         const dtstart: { [key: string]: string } | undefined = vevent?.getFirstPropertyValue("dtstart");
         const timezone = dtstart ? dtstart["timezone"] : undefined;
         // We check if the dtstart timezone is in UTC which is actually represented by Z instead, but not recognized as that in ICAL.js as UTC
         const isUTC = timezone === "Z";
-        const tzid: string | undefined = vevent?.getFirstPropertyValue("tzid") || isUTC ? "UTC" : timezone;
+
+        // Fix precedence: prioritize TZID from DTSTART property, then standalone TZID, then UTC, then fallback
+        const tzid: string | undefined =
+          tzidFromDtstart || vevent?.getFirstPropertyValue("tzid") || (isUTC ? "UTC" : timezone);
         // In case of icalendar, when only tzid is available without vtimezone, we need to add vtimezone explicitly to take care of timezone diff
         if (!vcalendar.getFirstSubcomponent("vtimezone")) {
           const timezoneToUse = tzid || userTimeZone;
@@ -423,7 +430,16 @@ export default abstract class BaseCalendarService implements Calendar {
             console.error("No timezone found");
           }
         }
-        const vtimezone = vcalendar.getFirstSubcomponent("vtimezone");
+
+        let vtimezone = null;
+        if (tzid) {
+          const allVtimezones = vcalendar.getAllSubcomponents("vtimezone");
+          vtimezone = allVtimezones.find((vtz) => vtz.getFirstPropertyValue("tzid") === tzid);
+        }
+
+        if (!vtimezone) {
+          vtimezone = vcalendar.getFirstSubcomponent("vtimezone");
+        }
 
         // mutate event to consider travel time
         applyTravelDuration(event, getTravelDurationInSeconds(vevent, this.log));
@@ -495,9 +511,11 @@ export default abstract class BaseCalendarService implements Calendar {
           event.endDate = event.endDate.convertToZone(zone);
         }
 
+        const finalStartISO = dayjs(event.startDate.toJSDate()).toISOString();
+        const finalEndISO = dayjs(event.endDate.toJSDate()).toISOString();
         return events.push({
-          start: dayjs(event.startDate.toJSDate()).toISOString(),
-          end: dayjs(event.endDate.toJSDate()).toISOString(),
+          start: finalStartISO,
+          end: finalEndISO,
         });
       });
     });
@@ -688,7 +706,8 @@ export default abstract class BaseCalendarService implements Calendar {
   }
 
   private async getEventsByUID(uid: string): Promise<CalendarEventType[]> {
-    const events: Prisma.PromiseReturnType<typeof this.getEvents> = [];
+    type EventsType = Awaited<ReturnType<typeof this.getEvents>>;
+    const events: EventsType = [];
     const calendars = await this.listCalendars();
 
     for (const cal of calendars) {

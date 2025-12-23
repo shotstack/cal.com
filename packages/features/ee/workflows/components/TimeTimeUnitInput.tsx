@@ -1,39 +1,36 @@
 import { useState } from "react";
-import type { UseFormReturn } from "react-hook-form";
+import { useFormContext } from "react-hook-form";
 
 import { useLocale } from "@calcom/lib/hooks/useLocale";
 import { TimeUnit } from "@calcom/prisma/enums";
+import { Icon } from "@calcom/ui/components/icon";
+import { TextField } from "@calcom/ui/components/form";
 import {
   Dropdown,
   DropdownItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  Icon,
-  TextField,
-} from "@calcom/ui";
-
-import type { FormValues } from "../pages/workflow";
+} from "@calcom/ui/components/dropdown";
 
 const TIME_UNITS = [TimeUnit.DAY, TimeUnit.HOUR, TimeUnit.MINUTE] as const;
 
 type Props = {
-  form: UseFormReturn<FormValues>;
   disabled: boolean;
+  defaultTime?: number;
 };
 
 const TimeUnitAddonSuffix = ({
   DropdownItems,
   timeUnitOptions,
-  form,
 }: {
-  form: UseFormReturn<FormValues>;
   DropdownItems: JSX.Element;
   timeUnitOptions: { [x: string]: string };
 }) => {
   // because isDropdownOpen already triggers a render cycle we can use getValues()
   // instead of watch() function
-  const timeUnit = form.getValues("timeUnit");
+  const form = useFormContext();
+  const timeUnit = form.getValues("timeUnit") ?? TimeUnit.MINUTE;
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   return (
     <Dropdown onOpenChange={setIsDropdownOpen}>
@@ -51,7 +48,8 @@ const TimeUnitAddonSuffix = ({
 };
 
 export const TimeTimeUnitInput = (props: Props) => {
-  const { form } = props;
+  const form = useFormContext();
+
   const { t } = useLocale();
   const timeUnitOptions = TIME_UNITS.reduce((acc, option) => {
     acc[option] = t(`${option.toLowerCase()}_timeUnit`);
@@ -65,12 +63,11 @@ export const TimeTimeUnitInput = (props: Props) => {
           min="1"
           label=""
           disabled={props.disabled}
-          defaultValue={form.getValues("time") || 24}
-          className="-mt-2 rounded-r-none text-sm focus:ring-0"
+          defaultValue={form.getValues("time") ?? props.defaultTime ?? 24}
+          className="rounded-r-none text-sm focus:ring-0"
           {...form.register("time", { valueAsNumber: true })}
           addOnSuffix={
             <TimeUnitAddonSuffix
-              form={form}
               timeUnitOptions={timeUnitOptions}
               DropdownItems={
                 <>
@@ -80,7 +77,7 @@ export const TimeTimeUnitInput = (props: Props) => {
                         key={index}
                         type="button"
                         onClick={() => {
-                          form.setValue("timeUnit", timeUnit);
+                          form.setValue("timeUnit", timeUnit, { shouldDirty: true });
                         }}>
                         {timeUnitOptions[timeUnit]}
                       </DropdownItem>

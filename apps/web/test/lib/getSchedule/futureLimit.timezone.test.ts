@@ -8,8 +8,8 @@ import type { ScenarioData } from "../../utils/bookingScenario/bookingScenario";
 
 import { describe, expect, vi, test } from "vitest";
 
+import { getAvailableSlotsService } from "@calcom/features/di/containers/AvailableSlots";
 import { PeriodType } from "@calcom/prisma/enums";
-import { getAvailableSlots as getSchedule } from "@calcom/trpc/server/routers/viewer/slots/util";
 
 import { expectedSlotsForSchedule } from "./expects";
 import { setupAndTeardown } from "./setupAndTeardown";
@@ -66,9 +66,11 @@ vi.mock("@calcom/lib/constants", () => ({
   WEBAPP_URL: "http://localhost:3000",
   RESERVED_SUBDOMAINS: ["auth", "docs"],
   ROLLING_WINDOW_PERIOD_MAX_DAYS_TO_CHECK: 61,
+  SINGLE_ORG_SLUG: "",
 }));
 
 describe("getSchedule", () => {
+  const availableSlotsService = getAvailableSlotsService();
   setupAndTeardown();
   describe("Future Limits", () => {
     describe("PeriodType=ROLLING", () => {
@@ -111,7 +113,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -121,6 +123,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -198,7 +201,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -208,6 +211,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -281,7 +285,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -291,6 +295,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -375,7 +380,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -385,6 +390,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -478,7 +484,7 @@ describe("getSchedule", () => {
 
           await createBookingScenario(scenarioData);
 
-          const scheduleForEvent = await getSchedule({
+          const scheduleForEvent = await availableSlotsService.getAvailableSlots({
             input: {
               eventTypeId: 1,
               eventTypeSlug: "",
@@ -488,6 +494,7 @@ describe("getSchedule", () => {
               endTime: `${plus5DateString}T18:29:59.999Z`,
               timeZone: Timezones["+5:30"],
               isTeamEvent: false,
+              orgSlug: null,
             },
           });
 
@@ -567,7 +574,7 @@ describe("getSchedule", () => {
 
           await createBookingScenario(scenarioData);
 
-          const scheduleForEvent = await getSchedule({
+          const scheduleForEvent = await availableSlotsService.getAvailableSlots({
             input: {
               eventTypeId: 1,
               eventTypeSlug: "",
@@ -577,6 +584,7 @@ describe("getSchedule", () => {
               endTime: `${plus5DateString}T18:29:59.999Z`,
               timeZone: Timezones["+5:30"],
               isTeamEvent: false,
+              orgSlug: null,
             },
           });
 
@@ -650,7 +658,7 @@ describe("getSchedule", () => {
 
           await createBookingScenario(scenarioData);
 
-          const scheduleForEvent = await getSchedule({
+          const scheduleForEvent = await availableSlotsService.getAvailableSlots({
             input: {
               eventTypeId: 1,
               eventTypeSlug: "",
@@ -660,30 +668,31 @@ describe("getSchedule", () => {
               endTime: `${plus5DateString}T18:29:59.999Z`,
               timeZone: Timezones["-11:00"],
               isTeamEvent: false,
+              orgSlug: null,
             },
           });
 
           const allTimeSlotsForToday = [
-            "2024-05-31T11:30:00.000Z",
-            "2024-06-01T04:30:00.000Z",
-            "2024-06-01T05:30:00.000Z",
-            "2024-06-01T06:30:00.000Z",
-            "2024-06-01T07:30:00.000Z",
-            "2024-06-01T08:30:00.000Z",
-            "2024-06-01T09:30:00.000Z",
-            "2024-06-01T10:30:00.000Z",
+            "2024-05-31T11:00:00.000Z",
+            "2024-06-01T04:00:00.000Z",
+            "2024-06-01T05:00:00.000Z",
+            "2024-06-01T06:00:00.000Z",
+            "2024-06-01T07:00:00.000Z",
+            "2024-06-01T08:00:00.000Z",
+            "2024-06-01T09:00:00.000Z",
+            "2024-06-01T10:00:00.000Z",
           ];
 
           expect(scheduleForEvent).toHaveTimeSlots(
             [
-              // "2024-05-30T04:30:00.000Z", // Not available as before the start of the range
-              "2024-05-31T04:30:00.000Z",
-              "2024-05-31T05:30:00.000Z",
-              "2024-05-31T06:30:00.000Z",
-              "2024-05-31T07:30:00.000Z",
-              "2024-05-31T08:30:00.000Z",
-              "2024-05-31T09:30:00.000Z",
-              "2024-05-31T10:30:00.000Z",
+              // "2024-05-30T04:00:00.000Z", // Not available as before the start of the range
+              "2024-05-31T04:00:00.000Z",
+              "2024-05-31T05:00:00.000Z",
+              "2024-05-31T06:00:00.000Z",
+              "2024-05-31T07:00:00.000Z",
+              "2024-05-31T08:00:00.000Z",
+              "2024-05-31T09:00:00.000Z",
+              "2024-05-31T10:00:00.000Z",
             ],
             {
               dateString: yesterdayDateString,
@@ -772,7 +781,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -782,6 +791,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -869,7 +879,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -879,6 +889,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -969,7 +980,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -979,6 +990,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -1076,7 +1088,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -1086,6 +1098,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -1195,7 +1208,7 @@ describe("getSchedule", () => {
 
           await createBookingScenario(scenarioData);
 
-          const scheduleForEvent = await getSchedule({
+          const scheduleForEvent = await availableSlotsService.getAvailableSlots({
             input: {
               eventTypeId: 1,
               eventTypeSlug: "",
@@ -1205,6 +1218,7 @@ describe("getSchedule", () => {
               endTime: `${plus5DateString}T18:29:59.999Z`,
               timeZone: Timezones["+5:30"],
               isTeamEvent: false,
+              orgSlug: null,
             },
           });
 
@@ -1291,7 +1305,7 @@ describe("getSchedule", () => {
 
           await createBookingScenario(scenarioData);
 
-          const scheduleForEvent = await getSchedule({
+          const scheduleForEvent = await availableSlotsService.getAvailableSlots({
             input: {
               eventTypeId: 1,
               eventTypeSlug: "",
@@ -1301,6 +1315,7 @@ describe("getSchedule", () => {
               endTime: `${plus5DateString}T18:29:59.999Z`,
               timeZone: Timezones["+5:30"],
               isTeamEvent: false,
+              orgSlug: null,
             },
           });
 
@@ -1399,7 +1414,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -1409,6 +1424,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -1500,7 +1516,7 @@ describe("getSchedule", () => {
 
         await createBookingScenario(scenarioData);
 
-        const scheduleForEvent = await getSchedule({
+        const scheduleForEvent = await availableSlotsService.getAvailableSlots({
           input: {
             eventTypeId: 1,
             eventTypeSlug: "",
@@ -1510,6 +1526,7 @@ describe("getSchedule", () => {
             endTime: `${plus5DateString}T18:29:59.999Z`,
             timeZone: Timezones["+5:30"],
             isTeamEvent: false,
+            orgSlug: null,
           },
         });
 
@@ -1585,7 +1602,7 @@ describe("getSchedule", () => {
 
           await createBookingScenario(scenarioData);
 
-          const scheduleForEventForPagoTz = await getSchedule({
+          const scheduleForEventForPagoTz = await availableSlotsService.getAvailableSlots({
             input: {
               eventTypeId: 1,
               eventTypeSlug: "",
@@ -1594,6 +1611,7 @@ describe("getSchedule", () => {
               endTime: `2024-07-31T18:29:59.999Z`,
               timeZone: Timezones["-11:00"],
               isTeamEvent: false,
+              orgSlug: null,
             },
           });
 
@@ -1616,13 +1634,13 @@ describe("getSchedule", () => {
 
           expect(scheduleForEventForPagoTz).toHaveTimeSlots(
             [
-              "2024-07-25T04:30:00.000Z",
-              "2024-07-25T05:30:00.000Z",
-              "2024-07-25T06:30:00.000Z",
-              "2024-07-25T07:30:00.000Z",
-              "2024-07-25T08:30:00.000Z",
-              "2024-07-25T09:30:00.000Z",
-              "2024-07-25T10:30:00.000Z",
+              "2024-07-25T04:00:00.000Z",
+              "2024-07-25T05:00:00.000Z",
+              "2024-07-25T06:00:00.000Z",
+              "2024-07-25T07:00:00.000Z",
+              "2024-07-25T08:00:00.000Z",
+              "2024-07-25T09:00:00.000Z",
+              "2024-07-25T10:00:00.000Z",
             ],
             {
               // 25th timeslots are shown mostly on 24th of Pago Pago
@@ -1633,14 +1651,14 @@ describe("getSchedule", () => {
 
           expect(scheduleForEventForPagoTz).toHaveTimeSlots(
             [
-              "2024-07-25T11:30:00.000Z",
-              "2024-07-26T04:30:00.000Z",
-              "2024-07-26T05:30:00.000Z",
-              "2024-07-26T06:30:00.000Z",
-              "2024-07-26T07:30:00.000Z",
-              "2024-07-26T08:30:00.000Z",
-              "2024-07-26T09:30:00.000Z",
-              "2024-07-26T10:30:00.000Z",
+              "2024-07-25T11:00:00.000Z",
+              "2024-07-26T04:00:00.000Z",
+              "2024-07-26T05:00:00.000Z",
+              "2024-07-26T06:00:00.000Z",
+              "2024-07-26T07:00:00.000Z",
+              "2024-07-26T08:00:00.000Z",
+              "2024-07-26T09:00:00.000Z",
+              "2024-07-26T10:00:00.000Z",
             ],
             {
               dateString: "2024-07-25",
@@ -1648,7 +1666,7 @@ describe("getSchedule", () => {
             }
           );
 
-          expect(scheduleForEventForPagoTz).toHaveTimeSlots(["2024-07-26T11:30:00.000Z"], {
+          expect(scheduleForEventForPagoTz).toHaveTimeSlots(["2024-07-26T11:00:00.000Z"], {
             dateString: "2024-07-26",
             doExactMatch: true,
           });

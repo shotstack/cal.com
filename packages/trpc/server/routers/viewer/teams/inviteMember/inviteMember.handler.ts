@@ -1,14 +1,17 @@
 import { type TFunction } from "i18next";
 
-import { updateQuantitySubscriptionFromStripe } from "@calcom/features/ee/teams/lib/payments";
+import { getTeamBillingServiceFactory } from "@calcom/ee/billing/di/containers/Billing";
+import { PermissionCheckService } from "@calcom/features/pbac/services/permission-check.service";
+import { UserRepository } from "@calcom/features/users/repositories/UserRepository";
 import { checkRateLimitAndThrowError } from "@calcom/lib/checkRateLimitAndThrowError";
-import { IS_TEAM_BILLING_ENABLED } from "@calcom/lib/constants";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
 import { getTranslation } from "@calcom/lib/server/i18n";
-import { isOrganisationOwner } from "@calcom/lib/server/queries/organisations";
+import { isOrganisationOwner } from "@calcom/features/pbac/utils/isOrganisationAdmin";
+import prisma from "@calcom/prisma";
 import { MembershipRole } from "@calcom/prisma/enums";
-import type { TrpcSessionUser } from "@calcom/trpc/server/trpc";
+import type { CreationSource } from "@calcom/prisma/enums";
+import type { TrpcSessionUser } from "@calcom/trpc/server/types";
 
 import { TRPCError } from "@trpc/server";
 
@@ -17,14 +20,14 @@ import type { TeamWithParent } from "./types";
 import type { Invitation } from "./utils";
 import {
   ensureAtleastAdminPermissions,
-  getTeamOrThrow,
-  getUniqueInvitationsOrThrowIfEmpty,
+  findUsersWithInviteStatus,
   getOrgConnectionInfo,
   getOrgState,
-  findUsersWithInviteStatus,
-  INVITE_STATUS,
+  getTeamOrThrow,
+  getUniqueInvitationsOrThrowIfEmpty,
   handleExistingUsersInvites,
   handleNewUsersInvites,
+  INVITE_STATUS,
 } from "./utils";
 
 const log = logger.getSubLogger({ prefix: ["inviteMember.handler"] });
@@ -139,16 +142,21 @@ export const inviteMembersWithNoInviterPermissionCheck = async (
       usernameOrEmail: string;
       role: MembershipRole;
     }[];
+    creationSource: CreationSource;
+    /**
+     * Whether invitation is a direct user action or not i.e. we need to show them User based errors like inviting existing users or not.
+     */
+    isDirectUserAction?: boolean;
   } & TargetTeam
 ) => {
-  const { inviterName, orgSlug, invitations, language } = data;
+  const { inviterName, orgSlug, invitations, language, creationSource, isDirectUserAction = true } = data;
   const myLog = log.getSubLogger({ prefix: ["inviteMembers"] });
   const translation = await getTranslation(language ?? "en", "common");
   const team = "team" in data ? data.team : await getTeamOrThrow(data.teamId);
   const isTeamAnOrg = team.isOrganization;
 
   const uniqueInvitations = await getUniqueInvitationsOrThrowIfEmpty(invitations);
-  const beSilentAboutErrors = shouldBeSilentAboutErrors(uniqueInvitations);
+  const beSilentAboutErrors = shouldBeSilentAboutErrors(uniqueInvitations) || !isDirectUserAction;
   const existingUsersToBeInvited = await findUsersWithInviteStatus({
     invitations: uniqueInvitations,
     team,
@@ -188,6 +196,7 @@ export const inviteMembersWithNoInviterPermissionCheck = async (
       isOrg: isTeamAnOrg,
       inviter,
       autoAcceptEmailDomain: orgState.autoAcceptEmailDomain,
+      creationSource,
     });
   }
 
@@ -220,9 +229,9 @@ export const inviteMembersWithNoInviterPermissionCheck = async (
     });
   }
 
-  if (IS_TEAM_BILLING_ENABLED) {
-    await updateQuantitySubscriptionFromStripe(team.parentId ?? team.id);
-  }
+  const teamBillingServiceFactory = getTeamBillingServiceFactory();
+  const teamBillingService = teamBillingServiceFactory.init(team);
+  await teamBillingService.updateQuantity();
 
   return {
     // TODO: Better rename it to invitations only maybe?
@@ -236,14 +245,36 @@ export const inviteMembersWithNoInviterPermissionCheck = async (
 
 const inviteMembers = async ({ ctx, input }: InviteMemberOptions) => {
   const { user: inviter } = ctx;
+  const { usernameOrEmail, role, isPlatform, creationSource } = input;
 
-  const inviterOrg = inviter.organization;
   const team = await getTeamOrThrow(input.teamId);
+
+  const permissionCheckService = new PermissionCheckService();
+  const hasPermission = await permissionCheckService.checkPermission({
+    userId: ctx.user.id,
+    teamId: team.id,
+    permission: "team.invite",
+    fallbackRoles: [MembershipRole.OWNER, MembershipRole.ADMIN],
+  });
+
+  if (!hasPermission) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "You are not authorized to invite team members in this organization's team",
+    });
+  }
+
+  const requestedSlugForTeam = team?.metadata?.requestedSlug ?? null;
   const isTeamAnOrg = team.isOrganization;
+  const organization = inviter.profile.organization;
+
+  let inviterOrgId = inviter.organization.id;
+  let orgSlug = organization ? organization.slug || organization.requestedSlug : null;
+  let isInviterOrgAdmin = inviter.organization.isOrgAdmin;
 
   const invitations = buildInvitationsFromInput({
-    usernameOrEmail: input.usernameOrEmail,
-    roleForAllInvitees: input.role,
+    usernameOrEmail,
+    roleForAllInvitees: role,
   });
   const isAddingNewOwner = !!invitations.find((invitation) => invitation.role === MembershipRole.OWNER);
 
@@ -251,18 +282,25 @@ const inviteMembers = async ({ ctx, input }: InviteMemberOptions) => {
     await throwIfInviterCantAddOwnerToOrg();
   }
 
+  if (isPlatform) {
+    inviterOrgId = team.id;
+    orgSlug = team ? team.slug || requestedSlugForTeam : null;
+    isInviterOrgAdmin = await new UserRepository(prisma).isAdminOrOwnerOfTeam({
+      userId: inviter.id,
+      teamId: team.id,
+    });
+  }
+
   await ensureAtleastAdminPermissions({
     userId: inviter.id,
-    teamId: inviterOrg.id && inviterOrg.isOrgAdmin ? inviterOrg.id : input.teamId,
+    teamId: inviterOrgId && isInviterOrgAdmin ? inviterOrgId : input.teamId,
     isOrg: isTeamAnOrg,
   });
-
-  const organization = inviter.profile.organization;
-  const orgSlug = organization ? organization.slug || organization.requestedSlug : null;
   const result = await inviteMembersWithNoInviterPermissionCheck({
     inviterName: inviter.name,
     team,
     language: input.language,
+    creationSource,
     orgSlug,
     invitations,
   });

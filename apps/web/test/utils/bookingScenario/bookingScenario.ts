@@ -1,43 +1,98 @@
-import appStoreMock from "../../../../../tests/libs/__mocks__/app-store";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import i18nMock from "../../../../../tests/libs/__mocks__/libServerI18n";
 import prismock from "../../../../../tests/libs/__mocks__/prisma";
 
-import type { BookingReference, Attendee, Booking, Membership } from "@prisma/client";
-import type { Prisma } from "@prisma/client";
-import type { WebhookTriggerEvents } from "@prisma/client";
 import type Stripe from "stripe";
 import { v4 as uuidv4 } from "uuid";
+import { vi } from "vitest";
 import "vitest-fetch-mock";
 import type { z } from "zod";
 
 import { appStoreMetadata } from "@calcom/app-store/appStoreMetaData";
 import { handleStripePaymentSuccess } from "@calcom/features/ee/payments/api/webhook";
-import { weekdayToWeekIndex, type WeekDays } from "@calcom/lib/date-fns";
+import { distributedTracing } from "@calcom/lib/tracing/factory";
+import { ProfileRepository } from "@calcom/features/profile/repositories/ProfileRepository";
+import { weekdayToWeekIndex, type WeekDays } from "@calcom/lib/dayjs";
 import type { HttpError } from "@calcom/lib/http-error";
+import type { IntervalLimit } from "@calcom/lib/intervalLimits/intervalLimitSchema";
 import logger from "@calcom/lib/logger";
 import { safeStringify } from "@calcom/lib/safeStringify";
-import { ProfileRepository } from "@calcom/lib/server/repository/profile";
+import type { BookingReference, Attendee, Booking, Membership } from "@calcom/prisma/client";
+import type { Prisma } from "@calcom/prisma/client";
+import type { WebhookTriggerEvents } from "@calcom/prisma/client";
 import type {
   WorkflowActions,
   WorkflowTemplates,
   WorkflowTriggerEvents,
   WorkflowMethods,
 } from "@calcom/prisma/client";
-import type { SchedulingType, SMSLockState, TimeUnit } from "@calcom/prisma/enums";
+import type { PaymentOption, SchedulingType, SMSLockState, TimeUnit } from "@calcom/prisma/enums";
 import type { BookingStatus } from "@calcom/prisma/enums";
 import type { teamMetadataSchema } from "@calcom/prisma/zod-utils";
 import type { userMetadataType } from "@calcom/prisma/zod-utils";
+import type { eventTypeBookingFields } from "@calcom/prisma/zod-utils";
+import type { EventTypeMetaDataSchema } from "@calcom/prisma/zod-utils";
 import type { AppMeta } from "@calcom/types/App";
-import type { NewCalendarEventType } from "@calcom/types/Calendar";
-import type { EventBusyDate, IntervalLimit } from "@calcom/types/Calendar";
+import type {
+  Calendar,
+  CalendarEvent,
+  IntegrationCalendar,
+  NewCalendarEventType,
+  EventBusyDate,
+} from "@calcom/types/Calendar";
+import type { CredentialPayload } from "@calcom/types/Credential";
+import type { VideoApiAdapter } from "@calcom/types/VideoApiAdapter";
 
 import { getMockPaymentService } from "./MockPaymentService";
 import type { getMockRequestDataForBooking } from "./getMockRequestDataForBooking";
+
+type NonNullableVideoApiAdapter = NonNullable<VideoApiAdapter>;
+vi.mock("@calcom/app-store/calendar.services.generated", () => ({
+  CalendarServiceMap: {
+    googlecalendar: Promise.resolve({ default: vi.fn() }),
+    office365calendar: Promise.resolve({ default: vi.fn() }),
+    applecalendar: Promise.resolve({ default: vi.fn() }),
+    caldavcalendar: Promise.resolve({ default: vi.fn() }),
+  },
+}));
+
+const mockVideoAdapterRegistry: Record<string, unknown> = {};
+
+vi.mock("@calcom/app-store/video.adapters.generated", () => ({
+  VideoApiAdapterMap: new Proxy(
+    {},
+    {
+      get(target, prop) {
+        if (typeof prop === "string" && mockVideoAdapterRegistry[prop]) {
+          return mockVideoAdapterRegistry[prop];
+        }
+        return Promise.resolve({ default: vi.fn() });
+      },
+    }
+  ),
+}));
+
+// We don't need to test it. Also, it causes Formbricks error when imported
+vi.mock("@calcom/lib/raqb/findTeamMembersMatchingAttributeLogic", () => ({
+  default: {},
+}));
+
+vi.mock("@calcom/lib/crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@calcom/lib/crypto")>();
+  return {
+    ...actual,
+    symmetricEncrypt: vi.fn((serviceAccountKey) => serviceAccountKey),
+    symmetricDecrypt: vi.fn((serviceAccountKey) => serviceAccountKey),
+  };
+});
+
+type Fields = z.infer<typeof eventTypeBookingFields>;
 
 logger.settings.minLevel = 1;
 const log = logger.getSubLogger({ prefix: ["[bookingScenario]"] });
 
 type InputWebhook = {
+  id?: string;
   appId: string | null;
   userId?: number | null;
   teamId?: number | null;
@@ -45,6 +100,8 @@ type InputWebhook = {
   active: boolean;
   eventTriggers: WebhookTriggerEvents[];
   subscriberUrl: string;
+  time?: number | null;
+  timeUnit?: TimeUnit | null;
 };
 
 type InputWorkflow = {
@@ -60,6 +117,22 @@ type InputWorkflow = {
   time?: number | null;
   timeUnit?: TimeUnit | null;
   sendTo?: string;
+  verifiedAt?: Date;
+};
+
+type InputPayment = {
+  id?: number;
+  uid: string;
+  appId?: string | null;
+  bookingId: number;
+  amount: number;
+  fee: number;
+  currency: string;
+  success: boolean;
+  refunded: boolean;
+  data: Prisma.InputJsonValue;
+  externalId: string;
+  paymentOption?: PaymentOption;
 };
 
 type InputWorkflowReminder = {
@@ -75,7 +148,20 @@ type InputWorkflowReminder = {
 type InputHost = {
   userId: number;
   isFixed?: boolean;
+  scheduleId?: number | null;
+  groupId?: string | null;
 };
+
+type InputSelectedSlot = {
+  eventTypeId: number;
+  userId: number;
+  slotUtcStartDate: Date;
+  slotUtcEndDate: Date;
+  uid: string;
+  releaseAt: Date;
+  isSeat?: boolean;
+};
+
 /**
  * Data to be mocked
  */
@@ -95,13 +181,17 @@ export type ScenarioData = {
   bookings?: InputBooking[];
   webhooks?: InputWebhook[];
   workflows?: InputWorkflow[];
+  payment?: InputPayment[];
+  selectedSlots?: InputSelectedSlot[];
 };
 
 type InputCredential = typeof TestData.credentials.google & {
   id?: number;
 };
 
-type InputSelectedCalendar = typeof TestData.selectedCalendars.google;
+type InputSelectedCalendar = (typeof TestData.selectedCalendars)[keyof typeof TestData.selectedCalendars] & {
+  eventTypeId?: number | null;
+};
 
 type InputUser = Omit<typeof TestData.users.example, "defaultScheduleId"> & {
   id: number;
@@ -134,6 +224,15 @@ type InputUser = Omit<typeof TestData.users.example, "defaultScheduleId"> & {
   destinationCalendar?: Prisma.DestinationCalendarCreateInput;
   weekStart?: string;
   profiles?: Prisma.ProfileUncheckedCreateWithoutUserInput[];
+  completedOnboarding?: boolean;
+  outOfOffice?: {
+    dateRanges: {
+      start: string;
+      end: string;
+    }[];
+  };
+  requiresBookerEmailVerification?: boolean;
+  secondaryEmails?: { email: string; emailVerified: Date | null }[];
 };
 
 export type InputEventType = {
@@ -142,28 +241,50 @@ export type InputEventType = {
   length?: number;
   offsetStart?: number;
   slotInterval?: number;
+  userId?: number;
   minimumBookingNotice?: number;
-  /**
-   * These user ids are `ScenarioData["users"]["id"]`
-   */
+  useEventLevelSelectedCalendars?: boolean;
   users?: { id: number }[];
   hosts?: InputHost[];
+  hostGroups?: { id: string; name: string }[];
   schedulingType?: SchedulingType;
+  parent?: { id: number };
   beforeEventBuffer?: number;
   afterEventBuffer?: number;
   teamId?: number | null;
   team?: {
     id?: number | null;
     parentId?: number | null;
+    bookingLimits?: IntervalLimit;
+    includeManagedEventsInLimits?: boolean;
   };
   requiresConfirmation?: boolean;
   destinationCalendar?: Prisma.DestinationCalendarCreateInput;
-  schedule?: InputUser["schedules"][number];
+  schedule?: InputUser["schedules"][number] | null;
   bookingLimits?: IntervalLimit;
   durationLimits?: IntervalLimit;
   owner?: number;
-  metadata?: any;
+  metadata?: z.infer<typeof EventTypeMetaDataSchema>;
   rescheduleWithSameRoundRobinHost?: boolean;
+  restrictionSchedule?: {
+    create: {
+      name: string;
+      timeZone: string;
+      availability: {
+        createMany: {
+          data: {
+            days: number[];
+            startTime: Date;
+            endTime: Date;
+            date: string | null;
+          }[];
+        };
+      };
+      user: { connect: { id: number } };
+    };
+  };
+  useBookerTimezone?: boolean;
+  restrictionScheduleId?: number;
 } & Partial<Omit<Prisma.EventTypeCreateInput, "users" | "schedule" | "bookingLimits" | "durationLimits">>;
 
 type AttendeeBookingSeatInput = Pick<Prisma.BookingSeatCreateInput, "referenceUid" | "data">;
@@ -179,12 +300,15 @@ type WhiteListedBookingProps = {
   status: BookingStatus;
   attendees?: {
     email: string;
+    phoneNumber?: string;
     bookingSeat?: AttendeeBookingSeatInput | null;
+    timeZone?: string;
   }[];
   references?: (Omit<ReturnType<typeof getMockBookingReference>, "credentialId"> & {
     // TODO: Make sure that all references start providing credentialId and then remove this intersection of optional credentialId
     credentialId?: number | null;
   })[];
+  user?: { id: number };
   bookingSeat?: Prisma.BookingSeatCreateInput[];
   createdAt?: string;
 };
@@ -199,6 +323,17 @@ export const Timezones = {
 
 async function addHostsToDb(eventTypes: InputEventType[]) {
   for (const eventType of eventTypes) {
+    // Create host groups first if they exist
+    if (eventType.hostGroups?.length) {
+      await prismock.hostGroup.createMany({
+        data: eventType.hostGroups.map((group) => ({
+          id: group.id, // Preserve the input ID
+          name: group.name,
+          eventTypeId: eventType.id,
+        })),
+      });
+    }
+
     if (!eventType.hosts?.length) continue;
     for (const host of eventType.hosts) {
       const data: Prisma.HostCreateInput = {
@@ -213,6 +348,20 @@ async function addHostsToDb(eventTypes: InputEventType[]) {
             id: host.userId,
           },
         },
+        schedule: host.scheduleId
+          ? {
+              connect: {
+                id: host.scheduleId,
+              },
+            }
+          : undefined,
+        group: host.groupId
+          ? {
+              connect: {
+                id: host.groupId,
+              },
+            }
+          : undefined,
       };
 
       await prismock.host.create({
@@ -225,21 +374,39 @@ async function addHostsToDb(eventTypes: InputEventType[]) {
 export async function addEventTypesToDb(
   eventTypes: (Omit<
     Prisma.EventTypeCreateInput,
-    "users" | "worflows" | "destinationCalendar" | "schedule"
+    "users" | "workflows" | "destinationCalendar" | "schedule"
   > & {
     id?: number;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    users?: any[];
+    users?: ({ id: number } | undefined)[];
     userId?: number;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    hosts?: any[];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    workflows?: any[];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    destinationCalendar?: any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    schedule?: any;
-    metadata?: any;
+    hosts?: {
+      user: InputUser | undefined;
+      id: number;
+    }[];
+    workflows?: Prisma.WorkflowCreateInput[];
+    destinationCalendar?: {
+      create: Prisma.DestinationCalendarCreateInput;
+    };
+    schedule?: { create: Prisma.ScheduleCreateInput } | null | undefined;
+    metadata?: z.infer<typeof EventTypeMetaDataSchema>;
+    team?: { id?: number | null; bookingLimits?: IntervalLimit; includeManagedEventsInLimits?: boolean };
+    restrictionSchedule?: {
+      create: {
+        name: string;
+        timeZone: string;
+        availability: {
+          createMany: {
+            data: {
+              days: number[];
+              startTime: Date;
+              endTime: Date;
+              date: string | null;
+            }[];
+          };
+        };
+        user: { connect: { id: number } };
+      };
+    };
   })[]
 ) {
   log.silly("TestData: Add EventTypes to DB", JSON.stringify(eventTypes));
@@ -252,14 +419,10 @@ export async function addEventTypesToDb(
       workflows: true,
       destinationCalendar: true,
       schedule: true,
+      hostGroups: true,
     },
   });
 
-  /**
-   * This is a hack to get the relationship of schedule to be established with eventType. Looks like a prismock bug that creating eventType along with schedule.create doesn't establish the relationship.
-   * HACK STARTS
-   */
-  log.silly("Fixed possible prismock bug by creating schedule separately");
   for (let i = 0; i < eventTypes.length; i++) {
     const eventType = eventTypes[i];
     const createdEventType = allEventTypes[i];
@@ -267,8 +430,6 @@ export async function addEventTypesToDb(
     if (eventType.schedule) {
       log.silly("TestData: Creating Schedule for EventType", JSON.stringify(eventType));
       await prismock.schedule.create({
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        //@ts-ignore
         data: {
           ...eventType.schedule.create,
           eventType: {
@@ -279,10 +440,41 @@ export async function addEventTypesToDb(
         },
       });
     }
+
+    // Handle restrictionSchedule creation and connection
+    if (eventType.restrictionSchedule) {
+      const createdRestrictionSchedule = await prismock.schedule.create({
+        data: {
+          ...eventType.restrictionSchedule.create,
+          eventType: {
+            connect: {
+              id: createdEventType.id,
+            },
+          },
+        },
+      });
+      await prismock.eventType.update({
+        where: { id: createdEventType.id },
+        data: { restrictionScheduleId: createdRestrictionSchedule.id },
+      });
+    }
+
+    if (eventType.team?.id) {
+      const createdTeam = await prismock.team.create({
+        data: {
+          id: eventType.team?.id,
+          bookingLimits: eventType.team?.bookingLimits,
+          includeManagedEventsInLimits: eventType.team?.includeManagedEventsInLimits,
+          name: "",
+        },
+      });
+
+      await prismock.eventType.update({
+        where: { id: eventType.id },
+        data: { teamId: createdTeam.id },
+      });
+    }
   }
-  /***
-   *  HACK ENDS
-   */
 
   log.silly(
     "TestData: All EventTypes in DB are",
@@ -301,6 +493,7 @@ export async function addEventTypes(eventTypes: InputEventType[], usersStore: In
     beforeEventBuffer: 0,
     afterEventBuffer: 0,
     bookingLimits: {},
+    includeManagedEventsInLimits: false,
     schedulingType: null,
     length: 15,
     //TODO: What is the purpose of periodStartDate and periodEndDate? Test these?
@@ -337,6 +530,7 @@ export async function addEventTypes(eventTypes: InputEventType[], usersStore: In
       workflows: [],
       users,
       hosts,
+      hostGroups: eventType.hostGroups || [],
       destinationCalendar: eventType.destinationCalendar
         ? {
             create: eventType.destinationCalendar,
@@ -354,13 +548,31 @@ export async function addEventTypes(eventTypes: InputEventType[], usersStore: In
             },
           }
         : eventType.schedule,
+      restrictionScheduleId: eventType.restrictionScheduleId ?? undefined,
+      useBookerTimezone: eventType.useBookerTimezone ?? false,
+      restrictionSchedule: eventType.restrictionSchedule
+        ? {
+            create: {
+              name: eventType.restrictionSchedule.create.name,
+              timeZone: eventType.restrictionSchedule.create.timeZone,
+              availability: {
+                createMany: {
+                  data: eventType.restrictionSchedule.create.availability.createMany.data,
+                },
+              },
+              user: { connect: { id: eventType.userId || (eventType.users && eventType.users[0]?.id) || 1 } },
+            },
+          }
+        : undefined,
       owner: eventType.owner ? { connect: { id: eventType.owner } } : undefined,
       schedulingType: eventType.schedulingType,
+      parent: eventType.parent ? { connect: { id: eventType.parent.id } } : undefined,
       rescheduleWithSameRoundRobinHost: eventType.rescheduleWithSameRoundRobinHost,
     };
   });
   log.silly("TestData: Creating EventType", JSON.stringify(eventTypesWithUsers));
-  return await addEventTypesToDb(eventTypesWithUsers);
+
+  return await addEventTypesToDb(eventTypesWithUsers as unknown as any);
 }
 
 function addBookingReferencesToDB(bookingReferences: Prisma.BookingReferenceCreateManyInput[]) {
@@ -371,8 +583,8 @@ function addBookingReferencesToDB(bookingReferences: Prisma.BookingReferenceCrea
 
 async function addBookingsToDb(
   bookings: (Prisma.BookingCreateInput & {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     references: any[];
+    user?: { id: number };
   })[]
 ) {
   log.silly("TestData: Creating Bookings", JSON.stringify(bookings));
@@ -463,15 +675,30 @@ export async function addBookings(bookings: InputBooking[]) {
         };
       }
 
+      if (booking?.user?.id) {
+        bookingCreate.user = {
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          //@ts-ignore
+          connect: {
+            id: booking.user.id,
+          },
+        };
+      }
+
       return bookingCreate;
     })
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function addWebhooksToDb(webhooks: any[]) {
   await prismock.webhook.createMany({
     data: webhooks,
+  });
+}
+
+async function addPaymentToDb(payment: InputPayment[]) {
+  await prismock.payment.createMany({
+    data: payment,
   });
 }
 
@@ -484,7 +711,7 @@ async function addWebhooks(webhooks: InputWebhook[]) {
 async function addWorkflowsToDb(workflows: InputWorkflow[]) {
   await Promise.all(
     workflows.map(async (workflow) => {
-      const team = await prismock.team.findFirst({
+      const team = await prismock.team.findUnique({
         where: {
           id: workflow.teamId ?? 0,
         },
@@ -525,6 +752,7 @@ async function addWorkflowsToDb(workflows: InputWorkflow[]) {
               id: createdWorkflow.id,
             },
           },
+          verifiedAt: workflow?.verifiedAt ?? new Date(),
         },
       });
 
@@ -570,13 +798,47 @@ export async function addWorkflowReminders(workflowReminders: InputWorkflowRemin
   });
 }
 
-export async function addUsersToDb(
-  users: (Prisma.UserCreateInput & { schedules: Prisma.ScheduleCreateInput[]; id?: number })[]
-) {
+export async function addUsersToDb(users: InputUser[]) {
   log.silly("TestData: Creating Users", JSON.stringify(users));
   await prismock.user.createMany({
     data: users,
   });
+
+  // Create OutOfOfficeEntry for users with outOfOffice data
+  for (const user of users) {
+    if (user.outOfOffice) {
+      log.debug("Creating OutOfOfficeEntry for user", user.id);
+      for (const dateRange of user.outOfOffice.dateRanges) {
+        await prismock.outOfOfficeEntry.create({
+          data: {
+            uuid: uuidv4(),
+            start: new Date(dateRange.start),
+            end: new Date(dateRange.end),
+            user: {
+              connect: {
+                id: user.id,
+              },
+            },
+          },
+        });
+      }
+    }
+  }
+
+  for (const user of users) {
+    if (user.secondaryEmails) {
+      log.debug("Creating SecondaryEmail entries for user", user.id);
+      for (const secondaryEmail of user.secondaryEmails) {
+        await prismock.secondaryEmail.create({
+          data: {
+            email: secondaryEmail.email,
+            emailVerified: secondaryEmail.emailVerified,
+            userId: user.id,
+          },
+        });
+      }
+    }
+  }
 
   const allUsers = await prismock.user.findMany({
     include: {
@@ -589,6 +851,7 @@ export async function addUsersToDb(
         },
       },
       destinationCalendar: true,
+      secondaryEmails: true,
     },
   });
 
@@ -705,7 +968,6 @@ export async function addUsers(users: InputUser[]) {
     }
     if (user.profiles) {
       newUser.profiles = {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-expect-error Not sure why this is not working
         createMany: {
           data: user.profiles,
@@ -720,7 +982,6 @@ export async function addUsers(users: InputUser[]) {
   return await addUsersToDb(prismaUsersCreate);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function addAppsToDb(apps: any[]) {
   log.silly("TestData: Creating Apps", JSON.stringify({ apps }));
   await prismock.app.createMany({
@@ -729,6 +990,16 @@ async function addAppsToDb(apps: any[]) {
   const allApps = await prismock.app.findMany();
   log.silly("TestData: Apps as in DB", JSON.stringify({ apps: allApps }));
 }
+
+async function addSelectedSlotsToDb(selectedSlots: InputSelectedSlot[]) {
+  log.silly("TestData: Creating Selected Slots", JSON.stringify(selectedSlots));
+  await prismock.selectedSlots.createMany({
+    data: selectedSlots,
+  });
+  const allSelectedSlots = await prismock.selectedSlots.findMany();
+  log.silly("TestData: Selected Slots as in DB", JSON.stringify({ selectedSlots: allSelectedSlots }));
+}
+
 export async function createBookingScenario(data: ScenarioData) {
   log.silly("TestData: Creating Scenario", JSON.stringify({ data }));
   await addUsers(data.users);
@@ -750,6 +1021,11 @@ export async function createBookingScenario(data: ScenarioData) {
   await addWebhooks(data.webhooks || []);
   // addPaymentMock();
   const workflows = await addWorkflows(data.workflows || []);
+  await addPaymentToDb(data.payment || []);
+
+  if (data.selectedSlots) {
+    await addSelectedSlotsToDb(data.selectedSlots);
+  }
 
   return {
     eventTypes,
@@ -757,12 +1033,22 @@ export async function createBookingScenario(data: ScenarioData) {
   };
 }
 
+type TeamCreateReturnType = Awaited<ReturnType<typeof prismock.team.create>>;
+
+function assertNonNullableSlug<T extends { slug: string | null }>(
+  org: T
+): asserts org is T & { slug: string } {
+  if (org.slug === null) {
+    throw new Error("Slug cannot be null");
+  }
+}
+
 export async function createOrganization(orgData: {
   name: string;
   slug: string;
   metadata?: z.infer<typeof teamMetadataSchema>;
   withTeam?: boolean;
-}) {
+}): Promise<TeamCreateReturnType & { slug: NonNullable<TeamCreateReturnType["slug"]>; children: any }> {
   const org = await prismock.team.create({
     data: {
       name: orgData.name,
@@ -788,14 +1074,19 @@ export async function createOrganization(orgData: {
       },
     });
   }
-
-  return org;
+  assertNonNullableSlug(org);
+  const team = await prismock.team.findUnique({ where: { id: org.id }, include: { children: true } });
+  if (!team) {
+    throw new Error(`Team with id ${org.id} not found`);
+  }
+  assertNonNullableSlug(team);
+  return team;
 }
 
 export async function createCredentials(
   credentialData: {
     type: string;
-    key: any;
+    key: Prisma.InputJsonValue;
     id?: number;
     userId?: number | null;
     teamId?: number | null;
@@ -975,6 +1266,10 @@ export const TestData = {
       integration: "google_calendar",
       externalId: "john@example.com",
     },
+    office365: {
+      integration: "office365_calendar",
+      externalId: "john@example.com",
+    },
   },
   credentials: {
     google: getGoogleCalendarCredential(),
@@ -1046,6 +1341,81 @@ export const TestData = {
       ],
       timeZone: Timezones["+5:30"],
     },
+    EmptyAvailability: {
+      name: "Empty Availability",
+      availability: [],
+      timeZone: Timezones["+5:30"],
+    },
+    IstNotAvailableForFullMonth: (monthYear: string) => {
+      const [year, month] = monthYear.split("-").map(Number); // Expecting format 'YYYY-MM'
+      const startOfMonth = new Date(year, month - 1, 1);
+      const endOfMonth = new Date(year, month, 0);
+      const availability: {
+        days: number[];
+        startTime: Date;
+        endTime: Date;
+        date: string | null;
+      }[] = [
+        {
+          days: [0, 1, 2, 3, 4, 5, 6],
+          startTime: new Date("1970-01-01T18:00:00.000Z"),
+          endTime: new Date("1970-01-01T22:00:00.000Z"),
+          date: null,
+        },
+      ];
+      // Generate unavailable dates for the entire month
+      const currentDate = new Date(startOfMonth);
+      while (currentDate <= endOfMonth) {
+        const dateString = currentDate.toISOString().split("T")[0];
+        availability.push({
+          days: [],
+          startTime: new Date(`${dateString}T00:00:00.000Z`),
+          endTime: new Date(`${dateString}T00:00:00.000Z`),
+          date: dateString,
+        });
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      return {
+        name: "Unavailable for the entire month, then available from 18:00AM to 22:00 IST",
+        availability,
+        timeZone: Timezones["+5:30"],
+      };
+    },
+    IstWorkHoursWithFirstTwoWeeksUnavailable: (dateString: string) => {
+      const date = new Date(dateString);
+      const availability: {
+        days: number[];
+        startTime: Date;
+        endTime: Date;
+        date: string | null;
+      }[] = [
+        {
+          days: [0, 1, 2, 3, 4, 5, 6],
+          startTime: new Date("1970-01-01T18:00:00.000Z"),
+          endTime: new Date("1970-01-01T22:00:00.000Z"),
+          date: null,
+        },
+      ];
+
+      // Generate dateoverride for each day in the first two weeks
+      for (let i = 0; i < 15; i++) {
+        const dateString = date.toISOString().split("T")[0];
+        availability.push({
+          days: [],
+          startTime: new Date(`${dateString}T00:00:00.000Z`),
+          endTime: new Date(`${dateString}T00:00:00.000Z`),
+          date: dateString,
+        });
+        date.setDate(date.getDate() + 1);
+      }
+
+      return {
+        name: "Unavailable for the first two weeks, then available from 18:00 to 22:00 IST",
+        availability,
+        timeZone: Timezones["+5:30"],
+      };
+    },
     IstWorkHoursWithDateOverride: (dateString: string) => ({
       name: "9:30AM to 6PM in India - 4:00AM to 12:30PM in GMT but with a Date Override for 2PM to 6PM IST(in GST time it is 8:30AM to 12:30PM)",
       availability: [
@@ -1099,6 +1469,16 @@ export const TestData = {
         client_id: "client_id",
         client_secret: "client_secret",
         redirect_uris: ["http://localhost:3000/auth/callback"],
+      },
+    },
+    "office365-calendar": {
+      ...appStoreMetadata.office365calendar,
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      //@ts-ignore
+      keys: {
+        expiry_date: Infinity,
+        client_id: "client_id",
+        client_secret: "client_secret",
       },
     },
     "google-meet": {
@@ -1175,6 +1555,12 @@ export function getOrganizer({
   organizationId,
   metadata,
   smsLockState,
+  completedOnboarding,
+  username,
+  locked,
+  emailVerified,
+  requiresBookerEmailVerification,
+  secondaryEmails,
 }: {
   name: string;
   email: string;
@@ -1189,10 +1575,18 @@ export function getOrganizer({
   teams?: InputUser["teams"];
   metadata?: userMetadataType;
   smsLockState?: SMSLockState;
+  completedOnboarding?: boolean;
+  username?: string;
+  locked?: boolean;
+  emailVerified?: Date | null;
+  requiresBookerEmailVerification?: boolean;
+  secondaryEmails?: { email: string; emailVerified: Date | null }[];
 }) {
+  username = username ?? TestData.users.example.username;
   return {
     ...TestData.users.example,
     name,
+    username,
     email,
     id,
     schedules,
@@ -1206,46 +1600,65 @@ export function getOrganizer({
     profiles: [],
     metadata,
     smsLockState,
+    completedOnboarding,
+    locked,
+    emailVerified,
+    requiresBookerEmailVerification,
+    secondaryEmails,
   };
 }
 
 export function getScenarioData(
   {
+    /**
+     * organizer has no special meaning. It is a regular user. It is supposed to be deprecated along with `usersApartFromOrganizer` and we should introduce a new `users` field instead
+     */
     organizer,
     eventTypes,
     usersApartFromOrganizer = [],
     apps = [],
+    users: _users,
     webhooks,
     workflows,
     bookings,
+    payment,
   }: {
-    organizer: ReturnType<typeof getOrganizer>;
+    organizer?: ReturnType<typeof getOrganizer>;
     eventTypes: ScenarioData["eventTypes"];
     apps?: ScenarioData["apps"];
+    users?: ScenarioData["users"];
     usersApartFromOrganizer?: ScenarioData["users"];
     webhooks?: ScenarioData["webhooks"];
     workflows?: ScenarioData["workflows"];
     bookings?: ScenarioData["bookings"];
+    payment?: ScenarioData["payment"];
   },
-  org?: { id: number | null } | undefined | null
+  org?: { id: number | null; profileUsername?: string } | undefined | null
 ) {
-  const users = [organizer, ...usersApartFromOrganizer];
+  if (_users && (usersApartFromOrganizer.length || organizer)) {
+    throw new Error("When users are provided, usersApartFromOrganizer and organizer should not be provided");
+  }
+  const users = _users ? _users : organizer ? [organizer, ...usersApartFromOrganizer] : [];
+  if (!users.length) {
+    throw new Error("No users are specified in any way");
+  }
   if (org) {
     const orgId = org.id;
     if (!orgId) {
       throw new Error("If org is specified org.id is required");
     }
+
     users.forEach((user) => {
+      const profileUsername = org.profileUsername ?? user.username ?? "";
       user.profiles = [
         {
           organizationId: orgId,
-          username: user.username || "",
+          username: profileUsername,
           uid: ProfileRepository.generateProfileUid(),
         },
       ];
     });
   }
-
   eventTypes.forEach((eventType) => {
     if (
       eventType.users?.filter((eventTypeUser) => {
@@ -1261,8 +1674,10 @@ export function getScenarioData(
         ...eventType,
         teamId: eventType.teamId || null,
         team: {
-          id: eventType.teamId,
+          id: eventType.teamId ?? eventType.team?.id,
           parentId: org ? org.id : null,
+          bookingLimits: eventType?.team?.bookingLimits,
+          includeManagedEventsInLimits: eventType?.team?.includeManagedEventsInLimits,
         },
         title: `Test Event Type - ${index + 1}`,
         description: `It's a test event type - ${index + 1}`,
@@ -1279,6 +1694,7 @@ export function getScenarioData(
     webhooks,
     bookings: bookings || [],
     workflows,
+    payment,
   } satisfies ScenarioData;
 }
 
@@ -1294,7 +1710,6 @@ export function enableEmailFeature() {
 
 export function mockNoTranslations() {
   log.silly("Mocking i18n.getTranslation to return identity function");
-  // @ts-expect-error FIXME
   i18nMock.getTranslation.mockImplementation(() => {
     return new Promise((resolve) => {
       const identityFn = (key: string) => key;
@@ -1309,29 +1724,91 @@ export const enum BookingLocations {
   GoogleMeet = "integrations:google:meet",
 }
 
+export type CalendarServiceMethodMockCallBase = {
+  calendarServiceConstructorArgs: {
+    credential: CredentialPayload;
+  };
+};
+
+type CreateEventMethodMockCall = CalendarServiceMethodMockCallBase & {
+  args: {
+    calEvent: CalendarEvent;
+    credentialId: number;
+    externalCalendarId?: string;
+  };
+};
+
+type UpdateEventMethodMockCall = CalendarServiceMethodMockCallBase & {
+  args: {
+    uid: string;
+    event: CalendarEvent;
+    externalCalendarId?: string | null;
+  };
+};
+
+type DeleteEventMethodMockCall = CalendarServiceMethodMockCallBase & {
+  args: {
+    uid: string;
+    event: CalendarEvent;
+    externalCalendarId?: string | null;
+  };
+};
+
+type GetAvailabilityMethodMockCall = CalendarServiceMethodMockCallBase & {
+  args: {
+    dateFrom: string;
+    dateTo: string;
+    selectedCalendars: IntegrationCalendar[];
+    shouldServeCache?: boolean;
+  };
+};
+
+export type CalendarServiceMethodMock = {
+  createEventCalls: CreateEventMethodMockCall[];
+  updateEventCalls: UpdateEventMethodMockCall[];
+  deleteEventCalls: DeleteEventMethodMockCall[];
+  getAvailabilityCalls: GetAvailabilityMethodMockCall[];
+};
+
 /**
  * @param metadataLookupKey
  * @param calendarData Specify uids and other data to be faked to be returned by createEvent and updateEvent
  */
-export function mockCalendar(
+export async function mockCalendar(
   metadataLookupKey: keyof typeof appStoreMetadata,
   calendarData?: {
     create?: {
       id?: string;
       uid?: string;
       iCalUID?: string;
+      appSpecificData?: {
+        googleCalendar?: {
+          hangoutLink?: string;
+        };
+        office365Calendar?: {
+          url?: string;
+        };
+      };
     };
     update?: {
       id?: string;
       uid: string;
       iCalUID?: string;
+      appSpecificData?: {
+        googleCalendar?: {
+          hangoutLink?: string;
+        };
+        office365Calendar?: {
+          url?: string;
+        };
+      };
     };
     busySlots?: { start: `${string}Z`; end: `${string}Z` }[];
     creationCrash?: boolean;
     updationCrash?: boolean;
     getAvailabilityCrash?: boolean;
   }
-) {
+): Promise<CalendarServiceMethodMock> {
   const appStoreLookupKey = metadataLookupKey;
   const normalizedCalendarData = calendarData || {
     create: {
@@ -1342,36 +1819,89 @@ export function mockCalendar(
     },
   };
   log.silly(`Mocking ${appStoreLookupKey} on appStoreMock`);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const createEventCalls: any[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const updateEventCalls: any[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const deleteEventCalls: any[] = [];
+
+  const createEventCalls: CreateEventMethodMockCall[] = [];
+  const updateEventCalls: UpdateEventMethodMockCall[] = [];
+  const deleteEventCalls: DeleteEventMethodMockCall[] = [];
+  const getAvailabilityCalls: GetAvailabilityMethodMockCall[] = [];
   const app = appStoreMetadata[metadataLookupKey as keyof typeof appStoreMetadata];
 
-  const appMock = appStoreMock.default[appStoreLookupKey as keyof typeof appStoreMock.default];
+  const { CalendarServiceMap } = await import("@calcom/app-store/calendar.services.generated");
+  const calendarServiceKey = appStoreLookupKey as keyof typeof CalendarServiceMap;
 
-  appMock &&
-    `mockResolvedValue` in appMock &&
-    appMock.mockResolvedValue({
-      lib: {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        //@ts-ignore
-        CalendarService: function MockCalendarService() {
-          return {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            createEvent: async function (...rest: any[]): Promise<NewCalendarEventType> {
-              if (calendarData?.creationCrash) {
-                throw new Error("MockCalendarService.createEvent fake error");
-              }
-              const [calEvent, credentialId] = rest;
-              log.silly("mockCalendar.createEvent", JSON.stringify({ calEvent, credentialId }));
-              createEventCalls.push(rest);
+  const calendarServicePromise = CalendarServiceMap[calendarServiceKey];
+  if (calendarServicePromise) {
+    const resolvedService = await calendarServicePromise;
+    vi.mocked(resolvedService.default).mockImplementation(
+      // @ts-expect-error - Mock implementation satisfies Calendar interface but TypeScript expects specific calendar service types
+      function MockCalendarService(credential) {
+        return {
+          createEvent: async function (
+            ...rest: Parameters<Calendar["createEvent"]>
+          ): Promise<NewCalendarEventType> {
+            if (calendarData?.creationCrash) {
+              throw new Error("MockCalendarService.createEvent fake error");
+            }
+            const [calEvent, credentialId, externalCalendarId] = rest;
+            log.debug(
+              "mockCalendar.createEvent",
+              JSON.stringify({ calEvent, credentialId, externalCalendarId })
+            );
+            createEventCalls.push({
+              args: {
+                calEvent,
+                credentialId,
+                externalCalendarId,
+              },
+              calendarServiceConstructorArgs: {
+                credential,
+              },
+            });
+            const isGoogleMeetLocation = calEvent?.location === BookingLocations.GoogleMeet;
+            if (app.type === "google_calendar") {
+              return Promise.resolve({
+                type: app.type,
+                additionalInfo: {
+                  hangoutLink:
+                    normalizedCalendarData.create?.appSpecificData?.googleCalendar?.hangoutLink ||
+                    "https://GOOGLE_MEET_URL_IN_CALENDAR_EVENT",
+                },
+                hangoutLink:
+                  normalizedCalendarData.create?.appSpecificData?.googleCalendar?.hangoutLink ||
+                  "https://GOOGLE_MEET_URL_IN_CALENDAR_EVENT",
+                uid: normalizedCalendarData.create?.uid || "GOOGLE_CALENDAR_EVENT_ID",
+                id: normalizedCalendarData.create?.id || "GOOGLE_CALENDAR_EVENT_ID",
+                iCalUID:
+                  normalizedCalendarData.create?.iCalUID || calEvent.iCalUID || "GOOGLE_CALENDAR_EVENT_ID",
+                password: "MOCK_PASSWORD",
+                url:
+                  normalizedCalendarData.create?.appSpecificData?.googleCalendar?.hangoutLink ||
+                  "https://GOOGLE_MEET_URL_IN_CALENDAR_EVENT",
+              });
+            } else if (app.type === "office365_calendar") {
+              return Promise.resolve({
+                type: app.type,
+                additionalInfo: {},
+                uid: normalizedCalendarData.create?.uid || "OFFICE_365_CALENDAR_EVENT_ID",
+                id: normalizedCalendarData.create?.id || "OFFICE_365_CALENDAR_EVENT_ID",
+                iCalUID:
+                  normalizedCalendarData.create?.iCalUID ||
+                  calEvent.iCalUID ||
+                  "OFFICE_365_CALENDAR_EVENT_ID",
+                password: "MOCK_PASSWORD",
+                url:
+                  normalizedCalendarData.create?.appSpecificData?.office365Calendar?.url ||
+                  "https://UNUSED_URL",
+              });
+            } else {
               return Promise.resolve({
                 type: app.type,
                 additionalInfo: {},
                 uid: "PROBABLY_UNUSED_UID",
+                hangoutLink:
+                  (isGoogleMeetLocation
+                    ? normalizedCalendarData.create?.appSpecificData?.googleCalendar?.hangoutLink
+                    : null) || "https://UNUSED_URL",
                 // A Calendar is always expected to return an id.
                 id: normalizedCalendarData.create?.id || "FALLBACK_MOCK_CALENDAR_EVENT_ID",
                 iCalUID: normalizedCalendarData.create?.iCalUID,
@@ -1379,59 +1909,95 @@ export function mockCalendar(
                 password: "MOCK_PASSWORD",
                 url: "https://UNUSED_URL",
               });
-            },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            updateEvent: async function (...rest: any[]): Promise<NewCalendarEventType> {
-              if (calendarData?.updationCrash) {
-                throw new Error("MockCalendarService.updateEvent fake error");
-              }
-              const [uid, event, externalCalendarId] = rest;
-              log.silly("mockCalendar.updateEvent", JSON.stringify({ uid, event, externalCalendarId }));
-              // eslint-disable-next-line prefer-rest-params
-              updateEventCalls.push(rest);
-              const isGoogleMeetLocation = event.location === BookingLocations.GoogleMeet;
-              return Promise.resolve({
-                type: app.type,
-                additionalInfo: {},
-                uid: "PROBABLY_UNUSED_UID",
-                iCalUID: normalizedCalendarData.update?.iCalUID,
+            }
+          },
+          updateEvent: async function (
+            ...rest: Parameters<Calendar["updateEvent"]>
+          ): Promise<NewCalendarEventType> {
+            if (calendarData?.updationCrash) {
+              throw new Error("MockCalendarService.updateEvent fake error");
+            }
+            const [uid, event, externalCalendarId] = rest;
+            log.silly("mockCalendar.updateEvent", JSON.stringify({ uid, event, externalCalendarId }));
+            updateEventCalls.push({
+              args: {
+                uid,
+                event,
+                externalCalendarId,
+              },
+              calendarServiceConstructorArgs: {
+                credential,
+              },
+            });
+            const isGoogleMeetLocation = event.location === BookingLocations.GoogleMeet;
+            return Promise.resolve({
+              type: app.type,
+              additionalInfo: {},
+              uid: "PROBABLY_UNUSED_UID",
+              iCalUID: normalizedCalendarData.update?.iCalUID,
+              id: normalizedCalendarData.update?.uid || "FALLBACK_MOCK_ID",
+              // Password and URL seems useless for CalendarService, plan to remove them if that's the case
+              password: "MOCK_PASSWORD",
+              url: "https://UNUSED_URL",
+              location: isGoogleMeetLocation ? "https://UNUSED_URL" : undefined,
+              hangoutLink:
+                (isGoogleMeetLocation
+                  ? normalizedCalendarData.update?.appSpecificData?.googleCalendar?.hangoutLink
+                  : null) || "https://UNUSED_URL",
+              conferenceData: isGoogleMeetLocation ? event.conferenceData : undefined,
+            });
+          },
+          deleteEvent: async (...rest: Parameters<Calendar["deleteEvent"]>) => {
+            log.silly("mockCalendar.deleteEvent", JSON.stringify({ rest }));
+            deleteEventCalls.push({
+              args: {
+                uid: rest[0],
+                event: rest[1],
+                externalCalendarId: rest[2],
+              },
+              calendarServiceConstructorArgs: {
+                credential,
+              },
+            });
+          },
+          getAvailability: async (
+            dateFrom: string,
+            dateTo: string,
+            selectedCalendars: IntegrationCalendar[],
+            shouldServeCache?: boolean
+          ): Promise<EventBusyDate[]> => {
+            if (calendarData?.getAvailabilityCrash) {
+              throw new Error("MockCalendarService.getAvailability fake error");
+            }
+            getAvailabilityCalls.push({
+              args: {
+                dateFrom,
+                dateTo,
+                selectedCalendars,
+                shouldServeCache,
+              },
+              calendarServiceConstructorArgs: {
+                credential,
+              },
+            });
+            return new Promise((resolve) => {
+              resolve(calendarData?.busySlots || []);
+            });
+          },
+        } as Calendar;
+      }
+    );
+  }
 
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                id: normalizedCalendarData.update?.uid || "FALLBACK_MOCK_ID",
-                // Password and URL seems useless for CalendarService, plan to remove them if that's the case
-                password: "MOCK_PASSWORD",
-                url: "https://UNUSED_URL",
-                location: isGoogleMeetLocation ? "https://UNUSED_URL" : undefined,
-                hangoutLink: isGoogleMeetLocation ? "https://UNUSED_URL" : undefined,
-                conferenceData: isGoogleMeetLocation ? event.conferenceData : undefined,
-              });
-            },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            deleteEvent: async (...rest: any[]) => {
-              log.silly("mockCalendar.deleteEvent", JSON.stringify({ rest }));
-              // eslint-disable-next-line prefer-rest-params
-              deleteEventCalls.push(rest);
-            },
-            getAvailability: async (): Promise<EventBusyDate[]> => {
-              if (calendarData?.getAvailabilityCrash) {
-                throw new Error("MockCalendarService.getAvailability fake error");
-              }
-              return new Promise((resolve) => {
-                resolve(calendarData?.busySlots || []);
-              });
-            },
-          };
-        },
-      },
-    });
   return {
     createEventCalls,
-    deleteEventCalls,
     updateEventCalls,
+    deleteEventCalls,
+    getAvailabilityCalls,
   };
 }
 
-export function mockCalendarToHaveNoBusySlots(
+export async function mockCalendarToHaveNoBusySlots(
   metadataLookupKey: keyof typeof appStoreMetadata,
   calendarData?: Parameters<typeof mockCalendar>[1]
 ) {
@@ -1443,15 +2009,19 @@ export function mockCalendarToHaveNoBusySlots(
       uid: "UPDATED_MOCK_ID",
     },
   };
-  return mockCalendar(metadataLookupKey, { ...calendarData, busySlots: [] });
+  return await mockCalendar(metadataLookupKey, { ...calendarData, busySlots: [] });
 }
 
-export function mockCalendarToCrashOnCreateEvent(metadataLookupKey: keyof typeof appStoreMetadata) {
-  return mockCalendar(metadataLookupKey, { creationCrash: true });
+export async function mockCalendarToCrashOnGetAvailability(metadataLookupKey: keyof typeof appStoreMetadata) {
+  return await mockCalendar(metadataLookupKey, { getAvailabilityCrash: true });
 }
 
-export function mockCalendarToCrashOnUpdateEvent(metadataLookupKey: keyof typeof appStoreMetadata) {
-  return mockCalendar(metadataLookupKey, { updationCrash: true });
+export async function mockCalendarToCrashOnCreateEvent(metadataLookupKey: keyof typeof appStoreMetadata) {
+  return await mockCalendar(metadataLookupKey, { creationCrash: true });
+}
+
+export async function mockCalendarToCrashOnUpdateEvent(metadataLookupKey: keyof typeof appStoreMetadata) {
+  return await mockCalendar(metadataLookupKey, { updationCrash: true });
 }
 
 export function mockVideoApp({
@@ -1478,73 +2048,64 @@ export function mockVideoApp({
     url: `http://mock-${metadataLookupKey}.example.com`,
   };
   log.silly("mockVideoApp", JSON.stringify({ metadataLookupKey, appStoreLookupKey }));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const createMeetingCalls: any[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const updateMeetingCalls: any[] = [];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const deleteMeetingCalls: any[] = [];
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  //@ts-ignore
-  appStoreMock.default[appStoreLookupKey as keyof typeof appStoreMock.default].mockImplementation(() => {
-    return new Promise((resolve) => {
-      resolve({
-        lib: {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          //@ts-ignore
-          VideoApiAdapter: (credential) => {
-            return {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              createMeeting: (...rest: any[]) => {
-                if (creationCrash) {
-                  throw new Error("MockVideoApiAdapter.createMeeting fake error");
-                }
-                createMeetingCalls.push({
-                  credential,
-                  args: rest,
-                });
 
-                return Promise.resolve({
-                  type: appStoreMetadata[metadataLookupKey as keyof typeof appStoreMetadata].type,
-                  ...videoMeetingData,
-                });
-              },
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              updateMeeting: async (...rest: any[]) => {
-                if (updationCrash) {
-                  throw new Error("MockVideoApiAdapter.updateMeeting fake error");
-                }
-                const [bookingRef, calEvent] = rest;
-                updateMeetingCalls.push({
-                  credential,
-                  args: rest,
-                });
-                if (!bookingRef.type) {
-                  throw new Error("bookingRef.type is not defined");
-                }
-                if (!calEvent.organizer) {
-                  throw new Error("calEvent.organizer is not defined");
-                }
-                log.silly("MockVideoApiAdapter.updateMeeting", JSON.stringify({ bookingRef, calEvent }));
-                return Promise.resolve({
-                  type: appStoreMetadata[metadataLookupKey as keyof typeof appStoreMetadata].type,
-                  ...videoMeetingData,
-                });
-              },
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              deleteMeeting: async (...rest: any[]) => {
-                log.silly("MockVideoApiAdapter.deleteMeeting", JSON.stringify(rest));
-                deleteMeetingCalls.push({
-                  credential,
-                  args: rest,
-                });
-              },
-            };
-          },
-        },
-      });
-    });
+  const createMeetingCalls: any[] = [];
+
+  const updateMeetingCalls: any[] = [];
+
+  const deleteMeetingCalls: any[] = [];
+
+  const mockVideoAdapter = (credential: unknown) => {
+    return {
+      createMeeting: (...rest: Parameters<NonNullableVideoApiAdapter["createMeeting"]>) => {
+        if (creationCrash) {
+          throw new Error("MockVideoApiAdapter.createMeeting fake error");
+        }
+        createMeetingCalls.push({
+          credential,
+          args: rest,
+        });
+
+        return Promise.resolve({
+          type: appStoreMetadata[metadataLookupKey as keyof typeof appStoreMetadata].type,
+          ...videoMeetingData,
+        });
+      },
+      updateMeeting: async (...rest: Parameters<NonNullableVideoApiAdapter["updateMeeting"]>) => {
+        if (updationCrash) {
+          throw new Error("MockVideoApiAdapter.updateMeeting fake error");
+        }
+        const [bookingRef, calEvent] = rest;
+        updateMeetingCalls.push({
+          credential,
+          args: rest,
+        });
+        if (!bookingRef.type) {
+          throw new Error("bookingRef.type is not defined");
+        }
+        if (!calEvent.organizer) {
+          throw new Error("calEvent.organizer is not defined");
+        }
+        log.silly("MockVideoApiAdapter.updateMeeting", JSON.stringify({ bookingRef, calEvent }));
+        return Promise.resolve({
+          type: appStoreMetadata[metadataLookupKey as keyof typeof appStoreMetadata].type,
+          ...videoMeetingData,
+        });
+      },
+      deleteMeeting: async (...rest: Parameters<NonNullableVideoApiAdapter["deleteMeeting"]>) => {
+        log.silly("MockVideoApiAdapter.deleteMeeting", JSON.stringify(rest));
+        deleteMeetingCalls.push({
+          credential,
+          args: rest,
+        });
+      },
+    };
+  };
+
+  mockVideoAdapterRegistry[appStoreLookupKey] = Promise.resolve({
+    default: mockVideoAdapter,
   });
+
   return {
     createMeetingCalls,
     updateMeetingCalls,
@@ -1593,19 +2154,8 @@ export function mockPaymentApp({
   metadataLookupKey: string;
   appStoreLookupKey?: string;
 }) {
-  appStoreLookupKey = appStoreLookupKey || metadataLookupKey;
-  const { paymentUid, externalId, MockPaymentService } = getMockPaymentService();
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  //@ts-ignore
-  appStoreMock.default[appStoreLookupKey as keyof typeof appStoreMock.default].mockImplementation(() => {
-    return new Promise((resolve) => {
-      resolve({
-        lib: {
-          PaymentService: MockPaymentService,
-        },
-      });
-    });
-  });
+  const _appStoreLookupKey = appStoreLookupKey || metadataLookupKey;
+  const { paymentUid, externalId } = getMockPaymentService();
 
   return {
     paymentUid,
@@ -1621,22 +2171,15 @@ export function mockErrorOnVideoMeetingCreation({
   appStoreLookupKey?: string;
 }) {
   appStoreLookupKey = appStoreLookupKey || metadataLookupKey;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  //@ts-ignore
-  appStoreMock.default[appStoreLookupKey].mockImplementation(() => {
-    return new Promise((resolve) => {
-      resolve({
-        lib: {
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          //@ts-ignore
-          VideoApiAdapter: () => ({
-            createMeeting: () => {
-              throw new MockError("Error creating Video meeting");
-            },
-          }),
-        },
-      });
-    });
+
+  const mockErrorAdapter = () => ({
+    createMeeting: () => {
+      throw new MockError("Error creating Video meeting");
+    },
+  });
+
+  mockVideoAdapterRegistry[appStoreLookupKey] = Promise.resolve({
+    default: mockErrorAdapter,
   });
 }
 
@@ -1664,42 +2207,49 @@ export function mockCrmApp(
     ownerEmail: string;
   }[] = [];
   const eventsCreated: boolean[] = [];
-  const app = appStoreMetadata[metadataLookupKey as keyof typeof appStoreMetadata];
-  const appMock = appStoreMock.default[metadataLookupKey as keyof typeof appStoreMock.default];
-  appMock &&
-    `mockResolvedValue` in appMock &&
-    appMock.mockResolvedValue({
-      lib: {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        //@ts-ignore
-        CrmService: class {
-          constructor() {
-            log.debug("Create CrmSerive");
-          }
 
-          createContact() {
-            if (crmData?.createContacts) {
-              contactsCreated = crmData.createContacts;
-              return Promise.resolve(crmData?.createContacts);
-            }
-          }
+  // Mock the CrmServiceMap directly instead of using the old app-store index approach
+  vi.doMock("@calcom/app-store/crm.apps.generated", async (importOriginal) => {
+    const original = await importOriginal<typeof import("@calcom/app-store/crm.apps.generated")>();
 
-          getContacts(email: string) {
-            if (crmData?.getContacts) {
-              contactsQueried = crmData?.getContacts;
-              const contactsOfEmail = contactsQueried.filter((contact) => contact.email === email);
+    class MockCrmService {
+      constructor() {
+        log.debug("Create CrmService");
+      }
 
-              return Promise.resolve(contactsOfEmail);
-            }
-          }
+      createContact() {
+        if (crmData?.createContacts) {
+          contactsCreated = crmData.createContacts;
+          return Promise.resolve(crmData?.createContacts);
+        }
+        return Promise.resolve([]);
+      }
 
-          createEvent() {
-            eventsCreated.push(true);
-            return Promise.resolve({});
-          }
-        },
+      getContacts(email: string) {
+        if (crmData?.getContacts) {
+          contactsQueried = crmData?.getContacts;
+          const contactsOfEmail = contactsQueried.filter((contact) => contact.email === email);
+          return Promise.resolve(contactsOfEmail);
+        }
+        return Promise.resolve([]);
+      }
+
+      createEvent() {
+        eventsCreated.push(true);
+        return Promise.resolve({});
+      }
+    }
+
+    return {
+      ...original,
+      CrmServiceMap: {
+        ...original.CrmServiceMap,
+        [metadataLookupKey]: Promise.resolve({
+          default: MockCrmService,
+        }),
       },
-    });
+    };
+  });
 
   return {
     contactsCreated,
@@ -1708,10 +2258,19 @@ export function mockCrmApp(
   };
 }
 
-export function getBooker({ name, email }: { name: string; email: string }) {
+export function getBooker({
+  name,
+  email,
+  attendeePhoneNumber,
+}: {
+  name: string;
+  email: string;
+  attendeePhoneNumber?: string;
+}) {
   return {
     name,
     email,
+    attendeePhoneNumber,
   };
 }
 
@@ -1729,7 +2288,8 @@ export function getMockedStripePaymentEvent({ paymentIntentId }: { paymentIntent
 export async function mockPaymentSuccessWebhookFromStripe({ externalId }: { externalId: string }) {
   let webhookResponse = null;
   try {
-    await handleStripePaymentSuccess(getMockedStripePaymentEvent({ paymentIntentId: externalId }));
+    const traceContext = distributedTracing.createTrace("test_stripe_webhook");
+    await handleStripePaymentSuccess(getMockedStripePaymentEvent({ paymentIntentId: externalId }), traceContext);
   } catch (e) {
     log.silly("mockPaymentSuccessWebhookFromStripe:catch", JSON.stringify(e));
     webhookResponse = e as HttpError;
@@ -1742,7 +2302,7 @@ export function getExpectedCalEventForBookingRequest({
   eventType,
 }: {
   bookingRequest: ReturnType<typeof getMockRequestDataForBooking>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   eventType: any;
 }) {
   return {
@@ -1770,8 +2330,11 @@ export function getMockBookingReference(
 }
 
 export function getMockBookingAttendee(
-  attendee: Omit<Attendee, "bookingId"> & {
+  attendee: Omit<Attendee, "bookingId" | "phoneNumber" | "email" | "noShow"> & {
     bookingSeat?: AttendeeBookingSeatInput;
+    phoneNumber?: string | null;
+    email: string;
+    noShow?: boolean;
   }
 ) {
   return {
@@ -1781,6 +2344,8 @@ export function getMockBookingAttendee(
     email: attendee.email,
     locale: attendee.locale,
     bookingSeat: attendee.bookingSeat || null,
+    phoneNumber: attendee.phoneNumber ?? undefined,
+    noShow: attendee.noShow ?? false,
   };
 }
 
@@ -1803,7 +2368,7 @@ const getMockAppStatus = ({
   }
   const foundApp = foundEntry[1];
   return {
-    appName: overrideName ?? foundApp.slug,
+    appName: overrideName ?? foundApp.name,
     type: foundApp.type,
     failures,
     success,
@@ -1822,4 +2387,207 @@ export const replaceDates = (dates: string[], replacement: Record<string, string
   return dates.map((date) => {
     return date.replace(/(.*)T/, (_, group1) => `${replacement[group1]}T`);
   });
+};
+
+export const getDefaultBookingFields = ({
+  emailField,
+  bookingFields = [],
+}: {
+  emailField?: Fields[number];
+  bookingFields: Fields;
+}) => {
+  return [
+    {
+      name: "name",
+      type: "name",
+      sources: [{ id: "default", type: "default", label: "Default" }],
+      editable: "system",
+      required: true,
+      defaultLabel: "your_name",
+    },
+    emailField
+      ? emailField
+      : {
+          name: "email",
+          type: "email",
+          label: "",
+          hidden: false,
+          sources: [{ id: "default", type: "default", label: "Default" }],
+          editable: "system-but-optional",
+          required: true,
+          placeholder: "",
+          defaultLabel: "email_address",
+        },
+    {
+      name: "location",
+      type: "radioInput",
+      sources: [{ id: "default", type: "default", label: "Default" }],
+      editable: "system",
+      required: false,
+      defaultLabel: "location",
+      getOptionsAt: "locations",
+      optionsInputs: {
+        phone: { type: "phone", required: true, placeholder: "" },
+        attendeeInPerson: { type: "address", required: true, placeholder: "" },
+      },
+      hideWhenJustOneOption: true,
+    },
+    {
+      name: "title",
+      type: "text",
+      hidden: true,
+      sources: [{ id: "default", type: "default", label: "Default" }],
+      editable: "system-but-optional",
+      required: true,
+      defaultLabel: "what_is_this_meeting_about",
+      defaultPlaceholder: "",
+    },
+    {
+      name: "notes",
+      type: "textarea",
+      sources: [{ id: "default", type: "default", label: "Default" }],
+      editable: "system-but-optional",
+      required: false,
+      defaultLabel: "additional_notes",
+      defaultPlaceholder: "share_additional_notes",
+    },
+    {
+      name: "guests",
+      type: "multiemail",
+      hidden: false,
+      sources: [{ id: "default", type: "default", label: "Default" }],
+      editable: "system-but-optional",
+      required: false,
+      defaultLabel: "additional_guests",
+      defaultPlaceholder: "email",
+    },
+    {
+      name: "rescheduleReason",
+      type: "textarea",
+      views: [{ id: "reschedule", label: "Reschedule View" }],
+      sources: [{ id: "default", type: "default", label: "Default" }],
+      editable: "system-but-optional",
+      required: false,
+      defaultLabel: "reason_for_reschedule",
+      defaultPlaceholder: "reschedule_placeholder",
+    },
+    ...bookingFields,
+  ] as Fields;
+};
+
+export const createDelegationCredential = async (orgId: number, type: "google" | "office365" = "google") => {
+  if (type === "google") {
+    const encryptedServiceAccountKey = {
+      type: "service_account",
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      client_id: "CLIENT_ID",
+      token_uri: "https://oauth2.googleapis.com/token",
+      project_id: "PROJECT_ID",
+      encrypted_credentials: `{"private_key": "PRIVATE_KEY"}`,
+      client_email: "CLIENT_EMAIL",
+      private_key_id: "PRIVATE_KEY_ID",
+      universe_domain: "googleapis.com",
+      client_x509_cert_url: "CLIENT_X509_CERT_URL",
+      auth_provider_x509_cert_url: "AUTH_PROVIDER_X509_CERT_URL",
+    };
+
+    const workspace = await prismock.workspacePlatform.create({
+      data: {
+        name: "Test Workspace",
+        slug: "google",
+        description: "Test Workspace",
+        defaultServiceAccountKey: encryptedServiceAccountKey,
+        enabled: true,
+      },
+    });
+
+    const decryptedServiceAccountKey = {
+      type: "service_account",
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      client_id: "CLIENT_ID",
+      token_uri: "https://oauth2.googleapis.com/token",
+      project_id: "PROJECT_ID",
+      private_key: "PRIVATE_KEY",
+      client_email: "CLIENT_EMAIL",
+      private_key_id: "PRIVATE_KEY_ID",
+      universe_domain: "googleapis.com",
+      client_x509_cert_url: "CLIENT_X509_CERT_URL",
+      auth_provider_x509_cert_url: "AUTH_PROVIDER_X509_CERT_URL",
+    };
+
+    const delegationCredential = await prismock.delegationCredential.create({
+      data: {
+        workspacePlatform: {
+          connect: {
+            id: workspace.id,
+          },
+        },
+        domain: "example.com",
+        enabled: true,
+        organization: {
+          connect: {
+            id: orgId,
+          },
+        },
+        serviceAccountKey: workspace.defaultServiceAccountKey as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    return { ...delegationCredential, serviceAccountKey: decryptedServiceAccountKey };
+  } else if (type === "office365") {
+    const encryptedServiceAccountKey = {
+      client_id: "CLIENT_ID",
+      encrypted_credentials: `{"private_key": "PRIVATE_KEY"}`,
+      tenant_id: "TENANT_ID",
+    };
+
+    const workspace = await prismock.workspacePlatform.create({
+      data: {
+        name: "Test Workspace",
+        slug: "office365",
+        description: "Test Workspace",
+        defaultServiceAccountKey: encryptedServiceAccountKey,
+        enabled: true,
+      },
+    });
+
+    const decryptedServiceAccountKey = {
+      client_id: "CLIENT_ID",
+      private_key: "PRIVATE_KEY",
+      tenant_id: "TENANT_ID",
+    };
+
+    const delegationCredential = await prismock.delegationCredential.create({
+      data: {
+        workspacePlatform: {
+          connect: {
+            id: workspace.id,
+          },
+        },
+        domain: "example.com",
+        enabled: true,
+        organization: {
+          connect: {
+            id: orgId,
+          },
+        },
+        serviceAccountKey: workspace.defaultServiceAccountKey as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    return { ...delegationCredential, serviceAccountKey: decryptedServiceAccountKey };
+  }
+  throw new Error(`Unsupported type: ${type}`);
+};
+
+export const buildDelegationCredential = ({ serviceAccountKey }: { serviceAccountKey: any }) => {
+  return {
+    id: -1,
+    key: {
+      access_token: "NOOP_UNUSED_DELEGATION_TOKEN",
+    },
+    delegatedTo: {
+      serviceAccountKey,
+    },
+  };
 };

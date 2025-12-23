@@ -4,13 +4,14 @@ import type { RouterInputs } from "@calcom/trpc/react";
 import { trpc } from "@calcom/trpc/react";
 
 interface ICreateEventsOnCalendarSelectProps {
-  calendar?: RouterInputs["viewer"]["setDestinationCalendar"] | null;
+  calendar?: RouterInputs["viewer"]["calendars"]["setDestinationCalendar"] | null;
 }
 
 const CreateEventsOnCalendarSelect = (props: ICreateEventsOnCalendarSelectProps) => {
   const { calendar } = props;
   const { t } = useLocale();
-  const mutation = trpc.viewer.setDestinationCalendar.useMutation();
+  const mutation = trpc.viewer.calendars.setDestinationCalendar.useMutation();
+  const connectedCalendarsQuery = trpc.viewer.calendars.connectedCalendars.useQuery();
 
   return (
     <>
@@ -26,6 +27,7 @@ const CreateEventsOnCalendarSelect = (props: ICreateEventsOnCalendarSelectProps)
                 mutation.mutate(calendar);
               }}
               hidePlaceholder
+              calendarsQueryData={connectedCalendarsQuery.data}
             />
           </div>
         </div>

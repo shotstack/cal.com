@@ -1,5 +1,6 @@
 import { useLocale } from "@calcom/lib/hooks/useLocale";
-import { SheetClose, Button } from "@calcom/ui";
+import { Button } from "@calcom/ui/components/button";
+import { SheetClose } from "@calcom/ui/components/sheet";
 
 import { useEditMode } from "./store";
 
@@ -13,22 +14,32 @@ function EditModeFooter() {
       <Button
         color="secondary"
         type="button"
+        className="justify-center"
         onClick={() => {
           setEditMode(false);
         }}>
         {t("cancel")}
       </Button>
 
-      <Button type="submit" className="w-fit" form="edit-user-form" loading={isPending}>
+      <Button type="submit" loading={isPending} className="justify-center">
         {t("update")}
       </Button>
     </>
   );
 }
 
-function MoreInfoFooter() {
+function MoreInfoFooter({
+  canEditAttributesForUser,
+  canChangeMemberRole,
+}: {
+  canEditAttributesForUser?: boolean;
+  canChangeMemberRole?: boolean;
+}) {
   const { t } = useLocale();
   const setEditMode = useEditMode((state) => state.setEditMode);
+
+  // Show edit button if user can change member role (edit user info) or edit attributes
+  const canEdit = canChangeMemberRole || canEditAttributesForUser;
 
   return (
     <>
@@ -37,20 +48,40 @@ function MoreInfoFooter() {
           {t("close")}
         </Button>
       </SheetClose>
-      <Button
-        type="button"
-        onClick={() => {
-          setEditMode(true);
-        }}
-        key="EDIT_BUTTON"
-        StartIcon="pencil">
-        {t("edit")}
-      </Button>
+      {canEdit && (
+        <Button
+          type="button"
+          className="justify-center"
+          onClick={() => {
+            setEditMode(true);
+          }}
+          key="EDIT_BUTTON"
+          StartIcon="pencil">
+          {t("edit")}
+        </Button>
+      )}
     </>
   );
 }
 
-export function SheetFooterControls() {
+export function SheetFooterControls({
+  canEditAttributesForUser,
+  canChangeMemberRole,
+}: {
+  canEditAttributesForUser?: boolean;
+  canChangeMemberRole?: boolean;
+}) {
   const editMode = useEditMode((state) => state.editMode);
-  return <>{editMode ? <EditModeFooter /> : <MoreInfoFooter />}</>;
+  return (
+    <>
+      {editMode ? (
+        <EditModeFooter />
+      ) : (
+        <MoreInfoFooter
+          canEditAttributesForUser={canEditAttributesForUser}
+          canChangeMemberRole={canChangeMemberRole}
+        />
+      )}
+    </>
+  );
 }
